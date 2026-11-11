@@ -27,8 +27,9 @@ main = "src/worker.ts"   # API + interface intégrée (npm run build:worker)
 [env.demo.vars]
 ENVIRONMENT = "demo"
 DEV_AUTH = "1"
-ACCESS_TEAM_DOMAIN = ""     # renseigné quand Access est activé (ex. obsidianpartners.cloudflareaccess.com)
-ACCESS_AUD = ""             # « Application Audience (AUD) Tag » de l'application Access
+ACCESS_TEAM_DOMAIN = "infrastructure-acquisition.cloudflareaccess.com"
+# « Application Audience (AUD) Tag » de l'application Access « Espace Obsidian — démo » (identifiant public, pas un secret)
+ACCESS_AUD = "793ae202165da0a102595bf35c44a8c0a994740495076043543d496e027a64e8"
 
 [[env.demo.d1_databases]]
 binding = "DB"
