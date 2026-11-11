@@ -75,6 +75,7 @@ clients.get('/:clientId/dashboard', async (c) => {
     sources,
     counter: computeAppointmentCounter(client, appts),
     thresholds: clientThresholds(client.thresholds_json, client.unit_economics_json),
+    unmeasured: parseList(client.unmeasured_json),
   });
 });
 
@@ -224,6 +225,7 @@ export async function overdueClientTasks(db: D1Database, clientId: string) {
 /** « Onboarding en cours · 3/10 · prochaine étape : contrat signé » (§8). */
 export async function currentPhaseProgress(db: D1Database, clientId: string) {
   const phases = await all<{ phase: string; state: string }>(db, 'SELECT phase, state FROM phases WHERE client_id = ?1', clientId);
+  if (phases.length === 0) return null; // aucune chaîne de production suivie pour ce client : pas de bandeau vide
   const states = new Map(phases.map((p) => [p.phase, p.state]));
   const current = PHASES.find((p) => states.get(p.key) === 'en_cours')
     ?? PHASES.find((p) => !['livre', 'valide'].includes(states.get(p.key) ?? 'a_venir'));
@@ -250,6 +252,10 @@ function publicClient(c: ClientRow, view: 'agence' | 'client') {
     ...base, thresholds: clientThresholds(c.thresholds_json, c.unit_economics_json), unitEconomics: safeJson(c.unit_economics_json),
     autoPublishRecos: Boolean(c.auto_publish_recos), onboardingLocked: Boolean(c.onboarding_locked),
   };
+}
+
+function parseList(json: string | undefined): string[] {
+  try { const v = JSON.parse(json ?? '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; } catch { return []; }
 }
 
 function clampDays(q: string | undefined): number {

@@ -34,6 +34,7 @@ export interface ClientRow {
   auto_publish_recos: number;
   onboarding_locked: number;
   onboarding_submitted_at?: string | null;
+  unmeasured_json?: string;
   is_demo: number;
 }
 

@@ -34,3 +34,19 @@ describe('Tableau de bord (données de démo)', () => {
     expect(json.rows[0].red).toBe(true);
   });
 });
+
+describe('Mesures non synchronisées', () => {
+  it("l'API signale les indicateurs qu'aucune source ne fournit (affichés « — », pas 0)", async () => {
+    const { call, raw } = setup();
+    raw.prepare(`UPDATE clients SET unmeasured_json = '["cash_collected_cents"]' WHERE id = ?`).run(A);
+    const json = await (await call(`/clients/${A}/dashboard`, { as: CLIENT_A })).json() as any;
+    expect(json.unmeasured).toEqual(['cash_collected_cents']);
+  });
+
+  it("pas de bandeau d'avancement pour un client sans chaîne de production suivie", async () => {
+    const { call, raw } = setup();
+    raw.prepare('DELETE FROM phases WHERE client_id = ?').run(B);
+    const json = await (await call(`/clients/${B}`, { as: CLIENT_B })).json() as any;
+    expect(json.progress).toBeNull();
+  });
+});

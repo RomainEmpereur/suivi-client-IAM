@@ -22,6 +22,8 @@ interface Dashboard {
   sources: { source: string; contacts: number }[];
   counter: AppointmentCounter;
   thresholds: Thresholds;
+  /** Indicateurs qu'aucune source ne fournit pour ce client : affichés « — », jamais 0. */
+  unmeasured: string[];
 }
 
 export function DashboardScreen({ clientId, search }: { clientId: string; search: string }) {
@@ -35,8 +37,10 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
   const prev = data?.previous?.totals;
   const dv = data?.current?.derived;
   const pdv = data?.previous?.derived;
-  const val = (k: keyof Totals) => (cur ? cur[k] : null);
-  const d = (k: keyof Totals) => delta(cur ? cur[k] : null, prev ? prev[k] : null);
+  const um = new Set(data?.unmeasured ?? []);
+  const val = (k: keyof Totals) => (cur && !um.has(k) ? cur[k] : null);
+  const d = (k: keyof Totals) => (um.has(k) ? null : delta(cur ? cur[k] : null, prev ? prev[k] : null));
+  const reason = (k: keyof Totals) => (um.has(k) ? 'Non synchronisé pour ce client' : NO_DATA);
   const ceiling = data?.thresholds.cost_per_booked_max_cents ?? null;
 
   return (
@@ -83,9 +87,9 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
                 missingReason={data.attendance.reason}
                 sub={<>{data.attendance.upcoming} à venir{data.attendance.missingStatus ? <> · <span style="color:var(--warn)">{data.attendance.missingStatus} sans statut</span></> : null}</>}
               />
-              <KpiCard label="Ventes gagnées" value={formatInt(val('sales'))} missingReason={NO_DATA} delta={d('sales')} sub={dv && `Coût d'acquisition ${formatEuros(dv.cac_cents)}`} />
+              <KpiCard label="Ventes gagnées" value={formatInt(val('sales'))} missingReason={reason('sales')} delta={d('sales')} sub={dv && `Coût d'acquisition ${formatEuros(dv.cac_cents)}`} />
               <KpiCard
-                label="Encaissé" value={formatEuros(val('cash_collected_cents'))} missingReason={NO_DATA} delta={d('cash_collected_cents')}
+                label="Encaissé" value={formatEuros(val('cash_collected_cents'))} missingReason={reason('cash_collected_cents')} delta={d('cash_collected_cents')}
                 sub={dv && <>ROAS encaissé {dv.roas_cash == null ? DASH : dv.roas_cash.toFixed(1).replace('.', ',')}{pdv?.roas_cash != null ? ` (préc. ${pdv.roas_cash.toFixed(1).replace('.', ',')})` : ''}</>}
               />
             </div>
