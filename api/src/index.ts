@@ -6,6 +6,7 @@ import { me } from './routes/me.ts';
 import { clients } from './routes/clients.ts';
 import { agency } from './routes/agency.ts';
 import { dev } from './routes/dev.ts';
+import { onboarding } from './routes/onboarding.ts';
 
 const app = new Hono<AppEnv>().basePath('/api');
 
@@ -23,6 +24,7 @@ app.route('/dev', dev);
 app.use('*', authenticate);
 app.route('/', me);
 app.route('/agence', agency);
+app.route('/clients', onboarding);
 app.route('/clients', clients);
 
 export default app;

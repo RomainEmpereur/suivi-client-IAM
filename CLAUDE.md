@@ -5,6 +5,8 @@ Lire `docs/cahier-des-charges.md` (il fait foi) et `docs/decisions/` avant toute
 ## Décisions figées
 - Construction neuve, stack Cloudflare : Pages (front Preact/Vite) + Worker (API Hono) + D1 + Access. Voir décisions 0001 et 0002.
 - Lots livrés : **0** (décision), **1** (socle : schéma, auth, rôles, bascule de vue, coquille des écrans sur données de démo).
+- Lot 2 en cours : formulaire d'onboarding livré (décision 0004). Restent les ressources (R2), l'édition agence des livrables et tâches, les commentaires sur livrable.
+- Le formulaire se définit **uniquement** dans `packages/domain/src/onboarding.ts` ; les clés de question sont stables (jamais renommées).
 - Défauts §20 appliqués : décision 0003.
 - Le rendez-vous validé se définit **uniquement** dans `packages/domain/src/appointments.ts`.
 - `metrics_daily` est la source unique des chiffres ; les écrans lisent `metrics_rollup`. Aucun écran n'appelle Meta ni GHL.

@@ -33,6 +33,7 @@ export interface ClientRow {
   ad_account_timezone: string;
   auto_publish_recos: number;
   onboarding_locked: number;
+  onboarding_submitted_at?: string | null;
   is_demo: number;
 }
 

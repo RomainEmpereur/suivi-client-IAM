@@ -57,3 +57,14 @@ export function verdict(value: number | null, limit: number | null, kind: 'max' 
   const gap = kind === 'max' ? (value - limit) / limit : (limit - value) / limit;
   return gap <= 0.2 ? 'surveiller' : 'corriger';
 }
+
+/** Seuils effectifs : surcharges du client, et à défaut, plafond calculé depuis les chiffres unitaires. */
+export function clientThresholds(thresholdsJson: string | null | undefined, unitEconomicsJson: string | null | undefined): Thresholds {
+  const t = resolveThresholds(thresholdsJson);
+  if (t.cost_per_booked_max_cents == null) {
+    let ue: UnitEconomics = {};
+    try { ue = unitEconomicsJson ? JSON.parse(unitEconomicsJson) : {}; } catch { ue = {}; }
+    t.cost_per_booked_max_cents = costPerAppointmentCeilingCents(ue);
+  }
+  return t;
+}

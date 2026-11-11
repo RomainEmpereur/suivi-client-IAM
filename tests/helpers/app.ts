@@ -8,6 +8,8 @@ export const CLIENT_A = 'client@nordline.demo.local';
 export const CLIENT_B = 'client@pilotis.demo.local';
 export const A = 'cl_demo_nordline';
 export const B = 'cl_demo_pilotis';
+export const C = 'cl_demo_atelier';
+export const CLIENT_C = 'client@atelier.demo.local';
 
 export function setup(envOverrides: Record<string, string> = {}) {
   const { d1, raw } = createTestDb(generateDemoSql(todayParis()));

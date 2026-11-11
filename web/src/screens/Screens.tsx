@@ -301,6 +301,7 @@ interface ConsoleRow {
   counter: { validated: number; target: number; onPace: boolean; daysRemaining: number } | null;
   spend7_cents: number | null; costPerBooked7_cents: number | null; connections: { type: string; state: string }[];
   openRecos: number; openFeedback: number; overdueClientTasks: number; red: boolean; redReasons: string[];
+  onboarding: 'a_remplir' | 'envoye' | 'complement_demande'; onboardingSubmittedAt: string | null;
 }
 
 export function ConsoleScreen() {
@@ -331,6 +332,7 @@ export function ConsoleScreen() {
                 { key: 'name', label: 'Client', value: (r) => r.name, render: (r) => <a href={`/c/${r.id}/tableau-de-bord`} title={r.redReasons.join(' · ')}>{r.name}</a> },
                 { key: 'action', label: 'À traiter', value: (r) => (r.red ? 1000 : 0) + r.openFeedback + r.overdueClientTasks + r.openRecos, render: (r) => r.red ? r.redReasons.join(' · ') : '—' },
                 { key: 'phase', label: 'Phase', value: (r) => r.phase },
+                { key: 'onb', label: 'Onboarding', value: (r) => r.onboardingSubmittedAt, render: (r) => <a href={`/c/${r.id}/onboarding`}>{r.onboarding === 'a_remplir' ? 'À remplir' : r.onboarding === 'complement_demande' ? 'Complément demandé' : `Envoyé le ${formatDate(r.onboardingSubmittedAt, { year: false })}`}</a> },
                 { key: 'days', label: 'Jours', value: (r) => r.daysSinceStart, render: (r) => formatInt(r.daysSinceStart) },
                 { key: 'counter', label: 'RDV validés', value: (r) => r.counter?.validated ?? null, render: (r) => r.counter ? `${r.counter.validated} / ${r.counter.target}${r.counter.onPace ? '' : ' · retard'}` : '—' },
                 { key: 'spend7', label: 'Dépense 7 j', value: (r) => r.spend7_cents, render: (r) => formatEuros(r.spend7_cents) },

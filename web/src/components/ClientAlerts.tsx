@@ -1,7 +1,7 @@
 import { formatDate } from '@obsidian/domain';
 
 export interface ClientOverview {
-  client: { id: string; name: string; campaignsLaunchedAt: string | null; isDemo: boolean };
+  client: { id: string; name: string; campaignsLaunchedAt: string | null; isDemo: boolean; onboardingSubmittedAt: string | null };
   lastSync: string | null;
   brokenConnections: { type: string; state: string }[];
   overdueClientTasks: { id: string; label: string; due_date: string; blocking: number }[];
@@ -18,6 +18,12 @@ export function ClientAlerts({ clientId, overview }: { clientId: string; overvie
   const broken = overview.brokenConnections.filter((c) => c.state === 'casse');
   return (
     <>
+      {!overview.client.onboardingSubmittedAt && (
+        <a class="banner accent" href={`/c/${clientId}/onboarding`}>
+          <span><strong>Première étape : votre onboarding.</strong> Tant qu'il n'est pas envoyé, la production ne peut pas démarrer. Vos réponses sont enregistrées au fil de l'eau.</span>
+          <span class="mono small">Remplir le formulaire →</span>
+        </a>
+      )}
       {broken.length > 0 && (
         <a class="banner alert" href={`/c/${clientId}/connexions`} style="color:inherit">
           <span><strong>Mesure en panne</strong> — {broken.map((c) => CONNECTION_LABEL[c.type] ?? c.type).join(', ')}. Les chiffres affichés peuvent être incomplets : ce n'est pas forcément un mauvais résultat.</span>

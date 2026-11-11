@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import {
   PHASES, computeAppointmentCounter, derived, parisDayStartMs, addDaysYmd, todayParis,
-  resolveThresholds, safeDiv, type AppointmentLike,
+  clientThresholds, safeDiv, type AppointmentLike,
 } from '@obsidian/domain';
 import type { AppEnv, ClientRow } from '../env.ts';
 import { requireAgency } from '../auth.ts';
@@ -74,7 +74,7 @@ clients.get('/:clientId/dashboard', async (c) => {
     pipeline,
     sources,
     counter: computeAppointmentCounter(client, appts),
-    thresholds: resolveThresholds(client.thresholds_json),
+    thresholds: clientThresholds(client.thresholds_json, client.unit_economics_json),
   });
 });
 
@@ -243,10 +243,11 @@ function publicClient(c: ClientRow, view: 'agence' | 'client') {
     startDate: c.start_date, campaignsLaunchedAt: c.campaigns_launched_at,
     appointmentTarget: c.appointment_target, windowDays: c.window_days,
     currency: c.ad_account_currency, timezone: c.ad_account_timezone, isDemo: Boolean(c.is_demo),
+    onboardingSubmittedAt: c.onboarding_submitted_at ?? null,
   };
   if (view === 'client') return base;
   return {
-    ...base, thresholds: resolveThresholds(c.thresholds_json), unitEconomics: safeJson(c.unit_economics_json),
+    ...base, thresholds: clientThresholds(c.thresholds_json, c.unit_economics_json), unitEconomics: safeJson(c.unit_economics_json),
     autoPublishRecos: Boolean(c.auto_publish_recos), onboardingLocked: Boolean(c.onboarding_locked),
   };
 }

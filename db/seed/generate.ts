@@ -6,7 +6,7 @@
  * La date (par défaut : aujourd'hui à Paris) sert d'ancre, pour que la démo soit toujours « à jour ».
  * Le résultat est déterministe pour une ancre donnée.
  */
-import { addDaysYmd, parisDayStartMs, rollupSql, todayParis } from '../../packages/domain/src/index.ts';
+import { ALL_QUESTIONS, addDaysYmd, parisDayStartMs, rollupSql, todayParis, unitEconomicsFromAnswers } from '../../packages/domain/src/index.ts';
 
 if (process.env.ENVIRONMENT === 'production') {
   console.error('Refusé : le jeu de démonstration ne peut pas être généré pour la production.');
@@ -77,7 +77,7 @@ export function generateDemoSql(anchor: string): string {
     appointment_target: 30, window_days: 90,
     thresholds_json: JSON.stringify({ cost_per_booked_max_cents: 8424 }),
     unit_economics_json: JSON.stringify({ monthly_ticket_cents: 39000, lifetime_months: 18, gross_margin: 0.8, demo_close_rate: 0.25, acceptable_share: 0.06 }),
-    onboarding_locked: 1, is_demo: 1,
+    onboarding_locked: 1, onboarding_submitted_at: parisAt(d(-72), 18), is_demo: 1,
   });
   insert('users', { id: 'usr_demo_nordline', email: 'client@nordline.demo.local', display_name: 'Client Nordline (démo)', role: 'client', client_id: A });
 
@@ -234,7 +234,7 @@ export function generateDemoSql(anchor: string): string {
   insert('clients', {
     id: B, name: 'Pilotis RH (démo)', slug: 'pilotis-demo', status: 'build',
     offer: 'Standard — 1 500 € + 1 500 € à 30 rendez-vous validés', start_date: d(-20), campaigns_launched_at: null,
-    onboarding_locked: 1, is_demo: 1,
+    onboarding_locked: 1, onboarding_submitted_at: parisAt(d(-17), 19), is_demo: 1,
   });
   insert('users', { id: 'usr_demo_pilotis', email: 'client@pilotis.demo.local', display_name: 'Client Pilotis (démo)', role: 'client', client_id: B });
   const phB: Record<string, string> = { onboarding: 'valide', offre: 'livre', landing: 'en_cours' };
@@ -272,6 +272,49 @@ export function generateDemoSql(anchor: string): string {
   ];
   connB.forEach(([type, state, error, action]) =>
     insert('connections', { id: `cn_${B}_${type}`, client_id: B, type, state, last_checked_at: nowIso, error_message: error, client_action: action }));
+
+
+  // ── Onboarding de démonstration ─────────────────────────────
+  const demoAnswer = (key: string, type: string, options?: string[]) =>
+    key === 'ue_ticket' ? '290' : key === 'ue_duree' ? '20' : key === 'ue_marge' ? '82' : key === 'ue_closing' ? '30' : key === 'ue_capacite' ? '12'
+    : type === 'choice' ? options![0] : type === 'multi' ? JSON.stringify([options![2], options![5]])
+    : type === 'short' ? 'Réponse courte de démonstration.' : 'Réponse de démonstration : texte libre rédigé par le client.';
+  const pilotisAnswers: Record<string, string> = {};
+  for (const x of ALL_QUESTIONS) {
+    const value = x.key === 'q01' ? 'Pilotis RH — logiciel de gestion des entretiens annuels et des compétences pour PME.' : demoAnswer(x.key, x.type, x.options);
+    pilotisAnswers[x.key] = value;
+    insert('onboarding_answers', {
+      id: `oa_${B}_${x.key}`, client_id: B, section: x.section, question_key: x.key, question_text: x.label,
+      answer: value, author_user_id: 'usr_demo_pilotis', status: 'soumis',
+    });
+  }
+  // Une réponse modifiée après l'envoi (visible en vue agence) et une section rouverte pour complément.
+  insert('onboarding_answer_history', {
+    id: `oh_${B}_1`, client_id: B, answer_id: `oa_${B}_q43`, previous_answer: '3 nouveaux clients par mois', new_answer: demoAnswer('q43', 'short'),
+    author_user_id: 'usr_demo_pilotis', after_production_start: 1,
+  });
+  insert('onboarding_reopenings', {
+    id: `or_${B}_1`, client_id: B, section: 'icp', question_key: 'avatar_journee',
+    message: 'Pouvez-vous détailler la journée type de votre DRH idéal ? Il nous manque des scènes concrètes pour le script de la VSL.',
+  });
+  out.push(`UPDATE clients SET unit_economics_json = ${q(JSON.stringify({ ...unitEconomicsFromAnswers(pilotisAnswers), acceptable_share: 0.06 }))} WHERE id = ${q(B)};`);
+
+  // Client C — Atelier Paie : onboarding en cours de remplissage
+  const C = 'cl_demo_atelier';
+  insert('clients', {
+    id: C, name: 'Atelier Paie (démo)', slug: 'atelier-demo', status: 'onboarding',
+    offer: 'Standard — 1 500 € + 1 500 € à 30 rendez-vous validés', start_date: d(-2), is_demo: 1,
+  });
+  insert('users', { id: 'usr_demo_atelier', email: 'client@atelier.demo.local', display_name: 'Client Atelier (démo)', role: 'client', client_id: C });
+  insert('phases', { id: `ph_${C}_onboarding`, client_id: C, phase: 'onboarding', state: 'en_cours', started_at: d(-2) });
+  insert('tasks', { id: `tk_${C}_1`, client_id: C, label: 'Remplir le formulaire d’onboarding', owner: 'client', phase: 'onboarding', status: 'a_faire', blocking: 1, due_date: d(3) });
+  insert('tasks', { id: `tk_${C}_2`, client_id: C, label: 'Signer le contrat', owner: 'client', phase: 'onboarding', status: 'fait', due_date: d(-1), done_at: parisAt(d(-1), 11) });
+  for (const x of ALL_QUESTIONS.filter((y) => y.section === 'entreprise').slice(0, 4)) {
+    insert('onboarding_answers', {
+      id: `oa_${C}_${x.key}`, client_id: C, section: x.section, question_key: x.key, question_text: x.label,
+      answer: demoAnswer(x.key, x.type, x.options), author_user_id: 'usr_demo_atelier', status: 'brouillon',
+    });
+  }
 
   return out.join('\n') + '\n';
 }

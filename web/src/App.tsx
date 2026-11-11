@@ -5,6 +5,7 @@ import { SessionContext, useSession, type Me, type Session } from './session.ts'
 import { store } from './store.ts';
 import { ErrorBox, Loading } from './components/ui.tsx';
 import { DashboardScreen } from './screens/Dashboard.tsx';
+import { OnboardingScreen } from './screens/Onboarding.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -138,7 +139,7 @@ function ClientScreen({ clientId, screen, search }: { clientId: string; screen: 
     case 'rendez-vous': return <AppointmentsScreen clientId={clientId} />;
     case 'rapport': return <LaterScreen clientId={clientId} a="Rapport" b="de période" lot={7}>Tableau comparatif hebdomadaire ou mensuel, analyse de l'agence et export PDF figé.</LaterScreen>;
     case 'feedback': return <LaterScreen clientId={clientId} a="Vos" b="retours" lot={7}>Formulaire de retour (bug, résultat, demande, question) et suivi des réponses de l'agence.</LaterScreen>;
-    case 'onboarding': return <LaterScreen clientId={clientId} a="Votre" b="onboarding" lot={2}>Le formulaire en huit sections avec sauvegarde automatique, et le dépôt des ressources attendues.</LaterScreen>;
+    case 'onboarding': return <OnboardingScreen clientId={clientId} />;
     default: return <LaterScreen clientId={clientId} a="Page" b="introuvable" lot={1}>Cette page n'existe pas.</LaterScreen>;
   }
 }

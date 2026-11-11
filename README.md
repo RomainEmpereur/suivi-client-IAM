@@ -27,11 +27,11 @@ npm run dev:api            # wrangler dev sur :8787
 npm run dev:web            # Vite sur :5173, /api relayé vers :8787
 ```
 Ouvrir http://localhost:5173 et choisir une identité de démonstration :
-`agence@obsidian.demo.local`, `client@nordline.demo.local` (campagnes en cours) ou `client@pilotis.demo.local` (en production de livrables).
+`agence@obsidian.demo.local`, `client@nordline.demo.local` (campagnes en cours), `client@pilotis.demo.local` (en production de livrables, une section d'onboarding rouverte) ou `client@atelier.demo.local` (onboarding à remplir).
 
 ## Tests
 ```bash
-npm test          # 44 tests : isolation A/B, brouillons, jetons, production, compteur, formats
+npm test          # 56 tests : isolation, brouillons, jetons, production, compteur, formats, onboarding
 npm run typecheck
 ```
 

@@ -29,6 +29,7 @@ agency.get('/console', async (c) => {
       overdueClientTasks(db, cl.id),
       currentPhaseProgress(db, cl.id),
     ]);
+    const reopened = await all<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM onboarding_reopenings WHERE client_id = ?1 AND closed_at IS NULL', cl.id);
     const counter = computeAppointmentCounter(cl, appts, today);
     const broken = conns.filter((x) => x.state === 'casse').map((x) => x.type);
     const spend7 = t7?.spend_cents ?? null;
@@ -52,6 +53,10 @@ agency.get('/console', async (c) => {
       openRecos: recos[0]?.n ?? 0,
       openFeedback: fb[0]?.n ?? 0,
       overdueClientTasks: overdue.length,
+      onboarding: cl.onboarding_submitted_at
+        ? (reopened[0]?.n ? 'complement_demande' : 'envoye')
+        : 'a_remplir',
+      onboardingSubmittedAt: cl.onboarding_submitted_at ?? null,
       red: redReasons.length > 0,
       redReasons,
     };

@@ -37,7 +37,7 @@ describe('Isolation entre clients', () => {
     expect((await call(`/clients/${A}`, { as: AGENCE })).status).toBe(200);
     expect((await call(`/clients/${B}`, { as: AGENCE })).status).toBe(200);
     const me = await (await call('/me', { as: AGENCE })).json() as { clients: unknown[] };
-    expect(me.clients).toHaveLength(2);
+    expect(me.clients).toHaveLength(3);
   });
 
   it('un client ne liste que son propre client', async () => {
