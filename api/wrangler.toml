@@ -1,0 +1,36 @@
+# Worker de l'API — Espace Obsidian Partners
+# Aucun secret ici : `wrangler secret put` uniquement (voir README).
+name = "espace-obsidian-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+ENVIRONMENT = "development"
+# Connexion de développement par en-tête X-Dev-User : refusée hors ENVIRONMENT=development.
+DEV_AUTH = "1"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "espace-obsidian"
+database_id = "00000000-0000-0000-0000-000000000000"   # remplacé par l'id réel après `wrangler d1 create`
+migrations_dir = "../db/migrations"
+
+# ─── Production ───────────────────────────────────────────────
+[env.production]
+name = "espace-obsidian-api"
+# Route /api/* sur le même domaine que le front (Cloudflare Pages) : un seul domaine protégé par Access.
+# routes = [{ pattern = "espace.obsidianpartners.fr/api/*", zone_name = "obsidianpartners.fr" }]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+DEV_AUTH = "0"
+ACCESS_TEAM_DOMAIN = ""     # ex. obsidianpartners.cloudflareaccess.com
+ACCESS_AUD = ""             # « Application Audience (AUD) Tag » de l'application Access
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "espace-obsidian"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../db/migrations"
+
+# Lot 3 : [triggers] crons = ["0 4,5 * * *"]  (6 h 00 Europe/Paris, été comme hiver — filtré dans le job)
