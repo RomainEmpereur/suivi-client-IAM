@@ -36,7 +36,16 @@ export function createTestDb(seedSql?: string) {
   if (seedSql) db.exec(seedSql);
   const d1 = {
     prepare: (sql: string) => new Stmt(db, sql),
-    batch: async (stmts: Stmt[]) => Promise.all(stmts.map((s) => s.run())),
+    // Comme D1 : un batch est une transaction (tout ou rien).
+    batch: async (stmts: Stmt[]) => {
+      db.exec('BEGIN');
+      try {
+        const out = [];
+        for (const st of stmts) out.push(await st.run());
+        db.exec('COMMIT');
+        return out;
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+    },
     exec: async (sql: string) => { db.exec(sql); return { count: 0, duration: 0 }; },
   };
   return { raw: db, d1: d1 as unknown as D1Database };

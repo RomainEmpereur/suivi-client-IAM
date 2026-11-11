@@ -187,11 +187,14 @@ function AgencyConnectionTools({ clientId }: { clientId: string }) {
     } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); }
   }
   async function sync() {
-    setBusy(true); setMsg(null);
+    setBusy(true); setMsg({ ok: true, text: 'Synchronisation en cours… (quelques secondes à une minute)' });
     try {
       const r = await api<{ result: { opportunities: number; appointments: number } }>(`/clients/${clientId}/sync`, { method: 'POST', body: '{}' });
       setMsg({ ok: true, text: `Synchronisation GHL terminée : ${r.result.opportunities} opportunités, ${r.result.appointments} rendez-vous lus.` });
-    } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); }
+    } catch (x) {
+      const m = (x as Error).message;
+      setMsg({ ok: false, text: /^Erreur 5\d\d$/.test(m) ? `${m} : la synchronisation a été interrompue par Cloudflare (limite de calcul ?). Aucune donnée n'a été modifiée.` : m });
+    } finally { setBusy(false); }
   }
   return (
     <div class="section card" style="border-color:var(--agency);display:flex;flex-direction:column;gap:10px">

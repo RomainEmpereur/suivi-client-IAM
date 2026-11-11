@@ -68,3 +68,15 @@ describe('Synchronisation GoHighLevel', () => {
     expect((raw.prepare(`SELECT contact_name FROM appointments WHERE ghl_appointment_id = 'e1'`).get() as any).contact_name).toBe('Jean D.');
   });
 });
+
+describe('Atomicité', () => {
+  it("une erreur pendant l'écriture ne laisse aucune trace (tout ou rien)", async () => {
+    const { d1, raw } = db();
+    const before = totals(raw);
+    // On fait échouer la transaction : le pipeline affiché renvoie une étape sans nom (contrainte NOT NULL).
+    const broken = { ...fake, pipelines: async () => ({ pipelines: [{ id: 'p1', name: 'P', stages: [{ id: 's_post', name: null, position: 1 }] }] }) } as any;
+    await expect(syncGhl(d1, 'cl', config, broken, W, NOW)).rejects.toThrow();
+    expect(totals(raw)).toEqual(before);
+    expect((raw.prepare('SELECT COUNT(*) n FROM appointments').get() as any).n).toBe(0);
+  });
+});

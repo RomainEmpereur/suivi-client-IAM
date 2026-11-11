@@ -157,6 +157,7 @@ export async function syncGhl(
   }
   for (const sql of ROLLUP_STATEMENTS) statements.push(db.prepare(sql).bind(clientId, window.from, window.to));
 
-  for (let i = 0; i < statements.length; i += 50) await db.batch(statements.slice(i, i + 50));
+  // Une seule transaction : tout ou rien. Une coupure ne laisse jamais des compteurs remis à zéro sans être réécrits.
+  await db.batch(statements);
   return { opportunities: opps.length, contacts: byContact.size, appointments: events.length, rowsWritten: agg.size, statuses };
 }
