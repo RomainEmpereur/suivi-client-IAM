@@ -62,3 +62,16 @@ connexion personnelle. Retenu : jetons de lecture et Worker cron (lot 3) ; MCP p
   (api.frankfurter.dev), dernier taux publié pour les jours sans cotation.
 - CRM : colonnes marquées « non synchronisées » (affichées « — ») jusqu'à la reprise GHL, après validation par Romain
   des étapes de chaque pipeline (R1 planifiée, après appel, no-show, gagné).
+
+## Reprise de l'infrastructure depuis les feuilles « Suivi projet » (12 nov. 2026)
+- Source : la feuille de suivi de chaque dossier Drive client (modèle de 39 tâches en 7 sections). Statuts repris tels quels :
+  Terminé → fait, En cours → en cours, À faire → à faire, En attente client → bloqué (affiché comme blocage de la phase).
+- Correspondance avec les 8 phases de l'espace : onboarding (1-4), offre (5-7), landing (copy landing, domaine),
+  VSL (VSL, VSP, validation et révisions des scripts, visuels, tournage, montage, hébergement), publicités (analyse → révision),
+  lancement (« Lancement Meta »), séquences (4 tâches), branchements et recette (GHL, tracking, reporting).
+  Tâches du client : Business Manager, formulaire, assets, enregistrement vidéo. Les autres : agence.
+- Contrôle : le nombre de tâches « Terminé » importées égale le total affiché par chaque feuille.
+- Seule correction : « Lancement Meta » coché quand le compte Meta a effectivement dépensé (date de la première dépense),
+  les feuilles n'ayant pas été mises à jour depuis mi-septembre (Qhare, Toolkit, Effinity).
+- Non repris : Ecommercio (feuille jamais remplie), Shopinzen (le « master tracker » est une liste de leads, pas un suivi),
+  Civex et Koverio (pas de feuille). À partir de maintenant, l'espace est la référence : les feuilles ne sont plus tenues.
