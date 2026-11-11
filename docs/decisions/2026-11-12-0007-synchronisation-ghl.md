@@ -29,3 +29,11 @@ main lors de l'import ; à exclure dans l'écran Rendez-vous, ce qui la protège
 - Paiements GHL non lus : le jeton actuel n'a pas les droits `payments` (encaissé « — »).
 - Le statut « dernier rendez-vous du contact » est évalué sur les rendez-vous lus dans la fenêtre.
 - Meta reste à brancher (jeton système en attente de la double validation du portefeuille).
+
+## Compléments (12 nov. 2026)
+- Réglage par noms d'étapes (`GhlNamedConfig`, résolu par `resolveGhlConfig`) ; l'ancien réglage par identifiants reste accepté.
+- Plusieurs pipelines affichés (migration 0007 : `pipeline_snapshot.pipeline_name`).
+- Sans calendrier précisé : tous les calendriers du sous-compte sont lus.
+- Après la première synchronisation réussie, contacts, rendez-vous et ventes sortent des mesures « non synchronisées ».
+- Bouton agence « Reprendre l'historique depuis le 1er janvier ».
+- Édition agence de l'infrastructure : création, modification, suppression de tâches ; état, date et blocage des phases ; journalisé.

@@ -6,7 +6,7 @@ import {
 import type { AppEnv, ClientRow } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { scopeClient } from '../scope.ts';
-import { all, audit, first, nowIso, run } from '../db.ts';
+import { all, audit, first, newId, nowIso, run } from '../db.ts';
 import { forbidden, notFound, HttpError } from '../errors.ts';
 import { clientTotals, dailySeries, entityTotals, lastSuccessfulSync, periodBounds, rangeBounds } from '../metrics.ts';
 import {
@@ -54,7 +54,7 @@ clients.get('/:clientId/dashboard', async (c) => {
     clientTotals(db, client.id, p.prevFrom, p.prevTo),
     dailySeries(db, client.id, p.from, p.to),
     entityTotals(db, client.id, 'campaign', p.from, p.to),
-    all<{ stage_name: string; open_opportunities: number }>(db, 'SELECT stage_name, open_opportunities FROM pipeline_snapshot WHERE client_id = ?1 ORDER BY stage_order', client.id),
+    all<{ stage_name: string; open_opportunities: number; pipeline_name: string | null }>(db, 'SELECT stage_name, open_opportunities, pipeline_name FROM pipeline_snapshot WHERE client_id = ?1 ORDER BY stage_order', client.id),
     all<{ source: string; contacts: number }>(db,
       `SELECT source, SUM(contacts) AS contacts FROM contact_sources_daily WHERE client_id = ?1 AND date >= ?2 GROUP BY source ORDER BY contacts DESC`,
       client.id, addDaysYmd(todayParis(), -90)),
@@ -121,19 +121,122 @@ clients.get('/:clientId/infrastructure', async (c) => {
   });
 });
 
-/** Le client coche ses propres tâches ; l'agence peut tout modifier. */
+/**
+ * Tâches (§10, §12) : le client coche ses propres tâches (à faire / fait) ; l'agence crée, modifie et supprime.
+ * Toute modification par l'agence est journalisée (avant / après).
+ */
+const TASK_STATUSES = ['a_faire', 'en_cours', 'bloque', 'fait'];
+const PHASE_KEYS: string[] = PHASES.map((p) => p.key);
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+interface TaskInput { label?: string; description?: string | null; owner?: string; phase?: string | null; status?: string; dueDate?: string | null; blocking?: boolean }
+
+function validateTaskInput(b: TaskInput, partial: boolean) {
+  if (!partial || b.label !== undefined) {
+    const l = (b.label ?? '').trim();
+    if (!l || l.length > 200) throw new HttpError(400, 'Libellé requis (200 caractères maximum).');
+  }
+  if (b.owner !== undefined && !['agence', 'client'].includes(b.owner)) throw new HttpError(400, 'Responsable invalide.');
+  if (!partial && !b.owner) throw new HttpError(400, 'Responsable requis.');
+  if (b.phase !== undefined && b.phase !== null && !PHASE_KEYS.includes(b.phase)) throw new HttpError(400, 'Phase invalide.');
+  if (b.status !== undefined && !TASK_STATUSES.includes(b.status)) throw new HttpError(400, 'Statut invalide.');
+  if (b.dueDate !== undefined && b.dueDate !== null && !YMD_RE.test(b.dueDate)) throw new HttpError(400, 'Échéance invalide.');
+  if (b.description !== undefined && b.description !== null && b.description.length > 2000) throw new HttpError(400, 'Description trop longue.');
+}
+
 clients.patch('/:clientId/tasks/:taskId', async (c) => {
   const client = c.get('client');
   const user = c.get('user');
   const task = await first<TaskRow>(c.env.DB, 'SELECT * FROM tasks WHERE id = ?1 AND client_id = ?2', c.req.param('taskId'), client.id);
   if (!task) throw notFound();
-  if (user.role === 'client' && task.owner !== 'client') throw forbidden();
-  const body = await c.req.json<{ status?: string }>().catch(() => ({} as { status?: string }));
-  const allowed = user.role === 'client' ? ['a_faire', 'fait'] : ['a_faire', 'en_cours', 'bloque', 'fait'];
-  if (!body.status || !allowed.includes(body.status)) throw new HttpError(400, 'Statut invalide.');
+  const body = await c.req.json<TaskInput>().catch(() => ({} as TaskInput));
   const now = nowIso();
-  await run(c.env.DB, 'UPDATE tasks SET status = ?1, done_at = ?2, updated_at = ?3 WHERE id = ?4 AND client_id = ?5',
-    body.status, body.status === 'fait' ? now : null, now, task.id, client.id);
+
+  if (user.role === 'client') {
+    if (task.owner !== 'client') throw forbidden();
+    const keys = Object.keys(body);
+    if (keys.some((k) => k !== 'status') || !body.status || !['a_faire', 'fait'].includes(body.status)) throw new HttpError(400, 'Statut invalide.');
+    await run(c.env.DB, 'UPDATE tasks SET status = ?1, done_at = ?2, updated_at = ?3 WHERE id = ?4 AND client_id = ?5',
+      body.status, body.status === 'fait' ? now : null, now, task.id, client.id);
+    return c.json({ ok: true });
+  }
+
+  requireAgency(c);
+  validateTaskInput(body, true);
+  const next = {
+    label: body.label !== undefined ? body.label.trim() : task.label,
+    description: body.description !== undefined ? body.description : task.description,
+    owner: body.owner ?? task.owner,
+    phase: body.phase !== undefined ? body.phase : task.phase,
+    status: body.status ?? task.status,
+    due_date: body.dueDate !== undefined ? body.dueDate : task.due_date,
+    blocking: body.blocking !== undefined ? (body.blocking ? 1 : 0) : task.blocking,
+  };
+  const doneAt = next.status === 'fait' ? (task.status === 'fait' ? task.done_at : now) : null;
+  await run(c.env.DB,
+    `UPDATE tasks SET label = ?1, description = ?2, owner = ?3, phase = ?4, status = ?5, due_date = ?6, blocking = ?7, done_at = ?8, updated_at = ?9
+     WHERE id = ?10 AND client_id = ?11`,
+    next.label, next.description, next.owner, next.phase, next.status, next.due_date, next.blocking, doneAt, now, task.id, client.id);
+  await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'tache_modifiee', objectType: 'task', objectId: task.id,
+    before: { label: task.label, owner: task.owner, phase: task.phase, status: task.status, due_date: task.due_date, blocking: task.blocking }, after: next });
+  return c.json({ ok: true });
+});
+
+clients.post('/:clientId/tasks', async (c) => {
+  requireAgency(c);
+  const client = c.get('client');
+  const user = c.get('user');
+  const body = await c.req.json<TaskInput>().catch(() => ({} as TaskInput));
+  validateTaskInput(body, false);
+  const id = newId('tk');
+  const status = body.status ?? 'a_faire';
+  await run(c.env.DB,
+    `INSERT INTO tasks (id, client_id, label, description, owner, phase, status, due_date, blocking, done_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+    id, client.id, body.label!.trim(), body.description ?? null, body.owner, body.phase ?? null, status, body.dueDate ?? null,
+    body.blocking ? 1 : 0, status === 'fait' ? nowIso() : null);
+  await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'tache_creee', objectType: 'task', objectId: id,
+    after: { label: body.label, owner: body.owner, phase: body.phase ?? null, status } });
+  return c.json({ ok: true, id }, 201);
+});
+
+clients.delete('/:clientId/tasks/:taskId', async (c) => {
+  requireAgency(c);
+  const client = c.get('client');
+  const user = c.get('user');
+  const task = await first<TaskRow>(c.env.DB, 'SELECT * FROM tasks WHERE id = ?1 AND client_id = ?2', c.req.param('taskId'), client.id);
+  if (!task) throw notFound();
+  await run(c.env.DB, 'DELETE FROM tasks WHERE id = ?1 AND client_id = ?2', task.id, client.id);
+  await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'tache_supprimee', objectType: 'task', objectId: task.id,
+    before: { label: task.label, owner: task.owner, phase: task.phase, status: task.status } });
+  return c.json({ ok: true });
+});
+
+/** Phases de la frise (§10) : état, date de début, blocage. Agence uniquement. */
+clients.patch('/:clientId/phases/:phase', async (c) => {
+  requireAgency(c);
+  const client = c.get('client');
+  const user = c.get('user');
+  const phase = c.req.param('phase');
+  if (!PHASE_KEYS.includes(phase)) throw notFound();
+  const body = await c.req.json<{ state?: string; startedAt?: string | null; blocker?: string | null }>().catch(() => ({} as Record<string, never>));
+  if (body.state !== undefined && !['a_venir', 'en_cours', 'livre', 'valide'].includes(body.state)) throw new HttpError(400, 'État invalide.');
+  if (body.startedAt !== undefined && body.startedAt !== null && !YMD_RE.test(body.startedAt)) throw new HttpError(400, 'Date invalide.');
+  if (body.blocker !== undefined && body.blocker !== null && body.blocker.length > 300) throw new HttpError(400, 'Blocage trop long.');
+  const before = await first<{ state: string; started_at: string | null; blocker: string | null }>(c.env.DB,
+    'SELECT state, started_at, blocker FROM phases WHERE client_id = ?1 AND phase = ?2', client.id, phase);
+  const next = {
+    state: body.state ?? before?.state ?? 'a_venir',
+    started_at: body.startedAt !== undefined ? body.startedAt : before?.started_at ?? null,
+    blocker: body.blocker !== undefined ? (body.blocker?.trim() || null) : before?.blocker ?? null,
+  };
+  await run(c.env.DB,
+    `INSERT INTO phases (id, client_id, phase, state, started_at, blocker) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT (client_id, phase) DO UPDATE SET state = excluded.state, started_at = excluded.started_at, blocker = excluded.blocker,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+    `ph_${client.id}_${phase}`, client.id, phase, next.state, next.started_at, next.blocker);
+  await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'phase_modifiee', objectType: 'phase', objectId: phase,
+    before: before ?? null, after: next });
   return c.json({ ok: true });
 });
 

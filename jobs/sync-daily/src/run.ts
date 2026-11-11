@@ -3,7 +3,7 @@
  * journal dans sync_runs, état de la connexion mis à jour. Lecture seule côté GHL ; aucun email.
  * Meta sera branché ici dès que le jeton système est disponible.
  */
-import { addDaysYmd, todayParis, type GhlClientConfig } from '../../../packages/domain/src/index.ts';
+import { addDaysYmd, resolveGhlConfig, todayParis, type GhlClientConfig, type GhlNamedConfig } from '../../../packages/domain/src/index.ts';
 import { createGhlClient, GhlError } from '../../../packages/ghl/src/index.ts';
 import { decryptToken } from '../../../api/src/crypto.ts';
 import { syncGhl, type GhlSyncResult } from './ghl.ts';
@@ -12,17 +12,23 @@ export interface SyncEnv { DB: D1Database; TOKEN_ENCRYPTION_KEY?: string }
 
 const id = (p: string) => `${p}_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
 
-export function parseGhlConfig(json: string | null | undefined, locationId: string | null): GhlClientConfig | null {
-  let c: Partial<GhlClientConfig> = {};
+export function parseGhlConfig(json: string | null | undefined, locationId: string | null): GhlClientConfig | GhlNamedConfig | null {
+  let c: any = {};
   try { c = JSON.parse(json || '{}'); } catch { return null; }
   const loc = c.locationId ?? locationId;
-  if (!loc || !c.pipelineIds?.length || !c.calendarIds?.length) return null;
+  if (!loc) return null;
+  if (Array.isArray(c.pipelineNames) && c.pipelineNames.length) {
+    return { ...c, locationId: loc } as GhlNamedConfig;
+  }
+  if (!c.pipelineIds?.length) return null;
   return {
-    locationId: loc, pipelineIds: c.pipelineIds, displayPipelineId: c.displayPipelineId ?? null, calendarIds: c.calendarIds,
-    postCallStageIds: c.postCallStageIds ?? [], noShowStageIds: c.noShowStageIds ?? [], wonStageIds: c.wonStageIds ?? [],
-    testTitlePrefixes: c.testTitlePrefixes ?? [],
+    locationId: loc, pipelineIds: c.pipelineIds, displayPipelineId: c.displayPipelineId ?? null, displayPipelineIds: c.displayPipelineIds,
+    calendarIds: c.calendarIds ?? [], postCallStageIds: c.postCallStageIds ?? [], noShowStageIds: c.noShowStageIds ?? [],
+    wonStageIds: c.wonStageIds ?? [], testTitlePrefixes: c.testTitlePrefixes ?? [],
   };
 }
+
+const CRM_MEASURES = ['crm_contacts', 'appointments_booked', 'appointments_held', 'sales'];
 
 /** Synchronise GHL pour un client. Fenêtre par défaut : les 30 derniers jours (les statuts évoluent après coup). */
 export async function runGhlForClient(env: SyncEnv, clientId: string, opts: { from?: string; to?: string; fetchImpl?: typeof fetch } = {})
@@ -54,8 +60,16 @@ export async function runGhlForClient(env: SyncEnv, clientId: string, opts: { fr
   try {
     const token = await decryptToken(conn.token_ciphertext, env.TOKEN_ENCRYPTION_KEY);
     const ghl = createGhlClient({ token, fetchImpl: opts.fetchImpl });
-    const result = await syncGhl(env.DB, clientId, config, ghl, { from, to });
+    const pipelines = (await ghl.pipelines(config.locationId)).pipelines;
+    const resolved = 'pipelineNames' in config ? resolveGhlConfig(config, pipelines) : config;
+    const result = await syncGhl(env.DB, clientId, resolved, ghl, { from, to }, Date.now(), pipelines);
     await finish(true, result.rowsWritten, null, 'ok', null);
+    // Le CRM est désormais synchronisé : ses indicateurs ne sont plus « non synchronisés ».
+    const um = await env.DB.prepare('SELECT unmeasured_json FROM clients WHERE id = ?1').bind(clientId).first<{ unmeasured_json: string }>();
+    let list: string[] = [];
+    try { list = JSON.parse(um?.unmeasured_json || '[]'); } catch { list = []; }
+    const next = list.filter((k) => !CRM_MEASURES.includes(k));
+    if (next.length !== list.length) await env.DB.prepare('UPDATE clients SET unmeasured_json = ?1 WHERE id = ?2').bind(JSON.stringify(next), clientId).run();
     return { ok: true, result };
   } catch (e) {
     const auth = e instanceof GhlError && (e.status === 401 || e.status === 403);

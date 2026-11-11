@@ -288,3 +288,14 @@ tr.red td:first-child { box-shadow: inset 3px 0 0 var(--alert); }
 .date-range input { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; font-family: var(--font-mono); font-size: 12.5px; }
 tr.warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .date-range input[type='text'], .date-range input[type='datetime-local'] { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; }
+
+/* ───── Édition de l'infrastructure (agence) ───── */
+.phase-btn { all: unset; cursor: pointer; display: flex; flex-direction: column; border-radius: 6px; }
+.phase-btn:hover .phase-name { color: var(--agency); }
+.phase-btn:focus-visible { outline: 2px solid var(--accent); }
+.task-status { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: 12.5px; }
+.task-form { display: flex; flex-direction: column; gap: 8px; }
+.task-form input[type='text'], .task-form input[type='date'], .task-form select {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px;
+}
+.task-form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

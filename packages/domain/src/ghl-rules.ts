@@ -20,6 +20,53 @@ export interface GhlClientConfig {
   wonStageIds: string[];
   /** Titres de rendez-vous à exclure comme tests internes. */
   testTitlePrefixes: string[];
+  /** Pipelines affichés (plusieurs possibles) ; prime sur displayPipelineId. */
+  displayPipelineIds?: string[];
+}
+
+/**
+ * Réglage saisi par NOMS (pipelines et étapes tels qu'affichés dans GHL), résolu en identifiants au moment
+ * de la synchronisation. Un nom inconnu bloque la synchronisation avec la liste des noms disponibles.
+ */
+export interface GhlNamedConfig {
+  locationId: string;
+  pipelineNames: string[];
+  displayPipelineNames?: string[];
+  calendarIds?: string[];
+  postCallStageNames: string[];
+  noShowStageNames: string[];
+  wonStageNames: string[];
+  testTitlePrefixes?: string[];
+}
+
+export function resolveGhlConfig(
+  named: GhlNamedConfig,
+  pipelines: { id: string; name: string; stages: { id: string; name: string }[] }[],
+): GhlClientConfig {
+  const norm = (x: string) => x.trim().toLowerCase();
+  const pick = named.pipelineNames.map((n) => {
+    const p = pipelines.find((x) => norm(x.name) === norm(n));
+    if (!p) throw new Error(`Pipeline GHL introuvable : « ${n} ». Disponibles : ${pipelines.map((x) => `« ${x.name} »`).join(', ')}`);
+    return p;
+  });
+  const stagesFor = (names: string[]) => names.flatMap((n) => {
+    const ids = pick.flatMap((p) => p.stages.filter((st) => norm(st.name) === norm(n)).map((st) => st.id));
+    if (!ids.length) throw new Error(`Étape GHL introuvable : « ${n} » dans ${pick.map((p) => `« ${p.name} »`).join(', ')}`);
+    return ids;
+  });
+  const display = (named.displayPipelineNames ?? named.pipelineNames).map((n) => pick.find((p) => norm(p.name) === norm(n))?.id)
+    .filter((x): x is string => Boolean(x));
+  return {
+    locationId: named.locationId,
+    pipelineIds: pick.map((p) => p.id),
+    displayPipelineId: display[0] ?? null,
+    displayPipelineIds: display,
+    calendarIds: named.calendarIds ?? [],
+    postCallStageIds: stagesFor(named.postCallStageNames),
+    noShowStageIds: stagesFor(named.noShowStageNames),
+    wonStageIds: stagesFor(named.wonStageNames),
+    testTitlePrefixes: named.testTitlePrefixes ?? [],
+  };
 }
 
 export type ApptStatus = 'prevu' | 'honore' | 'absent' | 'annule';

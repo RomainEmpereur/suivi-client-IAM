@@ -33,6 +33,7 @@ export async function syncGhl(
   ghl: GhlClient,
   window: { from: string; to: string },
   now = Date.now(),
+  pipelines?: { id: string; name: string; stages: { id: string; name: string; position: number }[] }[],
 ): Promise<GhlSyncResult> {
   const inWindow = (d: string) => d >= window.from && d <= window.to;
 
@@ -42,7 +43,9 @@ export async function syncGhl(
   const events: GhlEvent[] = [];
   const startMs = Date.parse(`${window.from}T00:00:00Z`) - 86_400_000;
   const endMs = now + 90 * 86_400_000;
-  for (const cal of config.calendarIds) events.push(...await ghl.events(config.locationId, cal, startMs, endMs));
+  // Aucun calendrier précisé : tous les calendriers du sous-compte.
+  const calendarIds = config.calendarIds.length ? config.calendarIds : (await ghl.calendars(config.locationId)).calendars.map((c) => c.id);
+  for (const cal of calendarIds) events.push(...await ghl.events(config.locationId, cal, startMs, endMs));
 
   // ── Contacts : une seule fois chacun, à leur première opportunité ──
   const byContact = new Map<string, GhlOpportunity[]>();
@@ -143,17 +146,19 @@ export async function syncGhl(
     const [date, source] = k.split('|');
     statements.push(db.prepare('INSERT INTO contact_sources_daily (client_id, date, source, contacts) VALUES (?1, ?2, ?3, ?4)').bind(clientId, date, source, n));
   }
-  if (config.displayPipelineId) {
-    const pipes = await ghl.pipelines(config.locationId);
-    const pipe = pipes.pipelines.find((p) => p.id === config.displayPipelineId);
-    if (pipe) {
-      statements.push(db.prepare('DELETE FROM pipeline_snapshot WHERE client_id = ?1').bind(clientId));
+  const displayIds = config.displayPipelineIds?.length ? config.displayPipelineIds : (config.displayPipelineId ? [config.displayPipelineId] : []);
+  if (displayIds.length) {
+    const pipes = pipelines ?? (await ghl.pipelines(config.locationId)).pipelines;
+    statements.push(db.prepare('DELETE FROM pipeline_snapshot WHERE client_id = ?1').bind(clientId));
+    displayIds.forEach((pid, rank) => {
+      const pipe = pipes.find((p) => p.id === pid);
+      if (!pipe) return;
       for (const st of [...pipe.stages].sort((a, b) => a.position - b.position)) {
         const n = opps.filter((o) => o.pipelineId === pipe.id && o.status === 'open' && o.pipelineStageId === st.id).length;
-        statements.push(db.prepare('INSERT INTO pipeline_snapshot (client_id, stage_order, stage_name, open_opportunities) VALUES (?1, ?2, ?3, ?4)')
-          .bind(clientId, st.position + 1, st.name, n));
+        statements.push(db.prepare('INSERT INTO pipeline_snapshot (client_id, stage_order, stage_name, open_opportunities, pipeline_name) VALUES (?1, ?2, ?3, ?4, ?5)')
+          .bind(clientId, rank * 100 + st.position + 1, st.name, n, pipe.name));
       }
-    }
+    });
   }
   for (const sql of ROLLUP_STATEMENTS) statements.push(db.prepare(sql).bind(clientId, window.from, window.to));
 

@@ -18,7 +18,7 @@ interface Dashboard {
   attendance: { held: number; noShow: number; missingStatus: number; upcoming: number; rate: number | null; reason: string | null };
   series: { date: string; spend_cents: number | null; leads: number | null; crm_contacts: number | null; appointments_booked: number | null }[];
   campaigns: { id: string; name: string | null; spend_cents: number; link_clicks: number; leads: number; cost_per_lead_cents: number | null }[];
-  pipeline: { stage_name: string; open_opportunities: number }[];
+  pipeline: { stage_name: string; open_opportunities: number; pipeline_name: string | null }[];
   sources: { source: string; contacts: number }[];
   counter: AppointmentCounter;
   thresholds: Thresholds;
@@ -160,7 +160,12 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
             <div class="card">
               <div class="label" style="margin-bottom:12px">Pipeline CRM · opportunités ouvertes</div>
               {data.pipeline.length
-                ? <HBars rows={data.pipeline.map((p) => ({ label: p.stage_name, value: p.open_opportunities }))} format={formatInt} />
+                ? [...new Set(data.pipeline.map((p) => p.pipeline_name ?? ''))].map((name, i, all) => (
+                    <div style={i ? 'margin-top:16px' : ''}>
+                      {all.length > 1 && <div class="small" style="margin-bottom:8px;font-weight:500">{name}</div>}
+                      <HBars rows={data.pipeline.filter((p) => (p.pipeline_name ?? '') === name).map((p) => ({ label: p.stage_name, value: p.open_opportunities }))} format={formatInt} />
+                    </div>
+                  ))
                 : <p class="muted small">Le pipeline apparaît après la première synchronisation GoHighLevel.</p>}
             </div>
             <div class="card">

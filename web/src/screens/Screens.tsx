@@ -21,7 +21,7 @@ interface Infra {
   deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; clientSummary?: string | null; published: boolean; publishedAt?: string | null }[];
   tasks: Record<'agence' | 'client', Task[]>;
 }
-interface Task { id: string; label: string; description: string | null; status: string; dueDate: string | null; guideId: string | null; overdue: boolean; blocking: boolean }
+interface Task { id: string; label: string; description: string | null; phase: string | null; status: string; dueDate: string | null; guideId: string | null; overdue: boolean; blocking: boolean }
 
 export function InfrastructureScreen({ clientId }: { clientId: string }) {
   const { data, error, loading, reload } = useApi<Infra>(`/clients/${clientId}/infrastructure`);
@@ -29,6 +29,9 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
   const { me, view } = useSession();
   const lastSync = useLastSync(clientId);
   const canTick = (owner: 'agence' | 'client') => (me.user.role === 'client' && owner === 'client') || (me.user.role === 'agence' && view === 'agence');
+  const editable = me.user.role === 'agence' && view === 'agence';
+  const [editPhase, setEditPhase] = useState<string | null>(null);
+  const phaseLabel = (k: string | null) => data?.phases.find((x) => x.key === k)?.label ?? null;
 
   async function toggle(t: Task) {
     await api(`/clients/${clientId}/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify({ status: t.status === 'fait' ? 'a_faire' : 'fait' }) });
@@ -53,11 +56,23 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
             <ol class="timeline" style="list-style:none;margin:0;padding:0">
               {data.phases.map((p, i) => (
                 <li class={`phase ${p.state}`} aria-current={p.state === 'en_cours' ? 'step' : undefined}>
-                  <span class="label">{String(i + 1).padStart(2, '0')} · {PHASE_STATE_LABEL[p.state]}</span>
-                  <span class="phase-name">{p.label}</span>
+                  {editable ? (
+                    <button type="button" class="phase-btn" aria-expanded={editPhase === p.key} onClick={() => setEditPhase(editPhase === p.key ? null : p.key)}>
+                      <span class="label">{String(i + 1).padStart(2, '0')} · {PHASE_STATE_LABEL[p.state]}</span>
+                      <span class="phase-name">{p.label} ✎</span>
+                    </button>
+                  ) : (
+                    <>
+                      <span class="label">{String(i + 1).padStart(2, '0')} · {PHASE_STATE_LABEL[p.state]}</span>
+                      <span class="phase-name">{p.label}</span>
+                    </>
+                  )}
                 </li>
               ))}
             </ol>
+            {editable && editPhase && (
+              <PhaseEditor clientId={clientId} phase={data.phases.find((x) => x.key === editPhase)!} onDone={() => { setEditPhase(null); reload(); }} />
+            )}
             {current && (
               <p class="small" style="margin:14px 0 0">
                 <strong>En cours : {current.label}</strong>{current.startedAt && <span class="muted"> · depuis le {formatDate(current.startedAt)}</span>}
@@ -95,9 +110,12 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
             </div>
             <div>
               <SectionTitle a="Qui fait" b="quoi" />
-              <TaskColumn title="Ce que vous faites" tasks={data.tasks.client} canTick={canTick('client')} onToggle={toggle} clientId={clientId} />
+              {editable && <TaskForm clientId={clientId} phases={data.phases} onDone={reload} />}
+              <TaskColumn title="Ce que vous faites" tasks={data.tasks.client} canTick={canTick('client')} onToggle={toggle} clientId={clientId}
+                editable={editable} phases={data.phases} phaseLabel={phaseLabel} owner="client" onChanged={reload} />
               <div style="height:12px" />
-              <TaskColumn title="Ce qu'on fait" tasks={data.tasks.agence} canTick={canTick('agence')} onToggle={toggle} clientId={clientId} />
+              <TaskColumn title="Ce qu'on fait" tasks={data.tasks.agence} canTick={canTick('agence')} onToggle={toggle} clientId={clientId}
+                editable={editable} phases={data.phases} phaseLabel={phaseLabel} owner="agence" onChanged={reload} />
             </div>
           </div>
         </>
@@ -106,26 +124,139 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
   );
 }
 
-function TaskColumn({ title, tasks, canTick, onToggle, clientId }: { title: string; tasks: Task[]; canTick: boolean; onToggle: (t: Task) => void; clientId: string }) {
+type PhaseLite = { key: string; label: string; state: PhaseState; startedAt: string | null; blocker: string | null };
+const TASK_STATUS_LABEL: Record<string, string> = { a_faire: 'À faire', en_cours: 'En cours', bloque: 'Bloqué', fait: 'Fait' };
+
+function TaskColumn({ title, tasks, canTick, onToggle, clientId, editable, phases, phaseLabel, owner, onChanged }: {
+  title: string; tasks: Task[]; canTick: boolean; onToggle: (t: Task) => void; clientId: string;
+  editable: boolean; phases: PhaseLite[]; phaseLabel: (k: string | null) => string | null; owner: 'agence' | 'client'; onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  async function patch(t: Task, body: Record<string, unknown>) {
+    setErr(null);
+    try { await api(`/clients/${clientId}/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify(body) }); onChanged(); }
+    catch (e) { setErr((e as Error).message); }
+  }
+  async function remove(t: Task) {
+    if (!confirm(`Supprimer la tâche « ${t.label} » ?`)) return;
+    setErr(null);
+    try { await api(`/clients/${clientId}/tasks/${t.id}`, { method: 'DELETE' }); onChanged(); }
+    catch (e) { setErr((e as Error).message); }
+  }
   return (
     <div class="card">
       <div class="label">{title}</div>
+      {err && <div class="small" style="color:var(--alert)" role="alert">{err}</div>}
       {tasks.length === 0 && <p class="muted small">Rien pour le moment.</p>}
-      {tasks.map((t) => (
+      {tasks.map((t) => editing === t.id ? (
+        <TaskForm key={t.id} clientId={clientId} phases={phases} task={{ ...t, owner }} onDone={() => { setEditing(null); onChanged(); }} onCancel={() => setEditing(null)} />
+      ) : (
         <div class={`task ${t.status === 'fait' ? 'done' : ''}`}>
-          <input type="checkbox" checked={t.status === 'fait'} disabled={!canTick} onChange={() => onToggle(t)} aria-label={t.label} />
-          <div>
+          {editable ? (
+            <select class="task-status" value={t.status} aria-label={`Statut de « ${t.label} »`} onChange={(e) => patch(t, { status: (e.target as HTMLSelectElement).value })}>
+              {Object.entries(TASK_STATUS_LABEL).map(([k, l]) => <option value={k}>{l}</option>)}
+            </select>
+          ) : (
+            <input type="checkbox" checked={t.status === 'fait'} disabled={!canTick} onChange={() => onToggle(t)} aria-label={t.label} />
+          )}
+          <div style="flex:1;min-width:0">
             <div class="task-label">{t.label}{t.blocking && t.status !== 'fait' ? <span class="mono small" style="color:var(--warn)"> · bloquant</span> : null}</div>
             <div class="small muted">
-              {t.dueDate && <span class={t.overdue ? 'overdue' : ''}>{t.overdue ? 'En retard · ' : 'Échéance · '}{formatDate(t.dueDate)}</span>}
-              {t.status === 'en_cours' && ' · en cours'}
-              {t.status === 'bloque' && ' · bloqué'}
+              {phaseLabel(t.phase) && <span>{phaseLabel(t.phase)}</span>}
+              {t.dueDate && <span class={t.overdue ? 'overdue' : ''}>{phaseLabel(t.phase) ? ' · ' : ''}{t.overdue ? 'En retard · ' : 'Échéance · '}{formatDate(t.dueDate)}</span>}
+              {!editable && t.status === 'en_cours' && ' · en cours'}
+              {!editable && t.status === 'bloque' && ' · en attente'}
               {t.guideId && <> · <a href={`/c/${clientId}/guides#${t.guideId}`}>Voir le guide</a></>}
             </div>
           </div>
+          {editable && (
+            <span style="display:inline-flex;gap:4px">
+              <button class="ghost-btn small" onClick={() => setEditing(t.id)} aria-label={`Modifier « ${t.label} »`}>Modifier</button>
+              <button class="ghost-btn small" onClick={() => remove(t)} aria-label={`Supprimer « ${t.label} »`}>✕</button>
+            </span>
+          )}
         </div>
       ))}
     </div>
+  );
+}
+
+/** Création ou modification d'une tâche (agence). */
+function TaskForm({ clientId, phases, task, onDone, onCancel }: {
+  clientId: string; phases: PhaseLite[]; task?: Task & { owner: 'agence' | 'client' }; onDone: () => void; onCancel?: () => void;
+}) {
+  const [open, setOpen] = useState(Boolean(task));
+  const [f, setF] = useState({
+    label: task?.label ?? '', owner: task?.owner ?? 'agence', phase: task?.phase ?? '', status: task?.status ?? 'a_faire',
+    dueDate: task?.dueDate ?? '', blocking: task?.blocking ?? false,
+  });
+  const [err, setErr] = useState<string | null>(null);
+  if (!open) return <button class="btn" style="margin-bottom:12px" onClick={() => setOpen(true)}>+ Ajouter une tâche</button>;
+  const set = (k: string, v: unknown) => setF({ ...f, [k]: v });
+  async function save(e: Event) {
+    e.preventDefault(); setErr(null);
+    const body = { label: f.label, owner: f.owner, phase: f.phase || null, status: f.status, dueDate: f.dueDate || null, blocking: f.blocking };
+    try {
+      await api(task ? `/clients/${clientId}/tasks/${task.id}` : `/clients/${clientId}/tasks`, { method: task ? 'PATCH' : 'POST', body: JSON.stringify(body) });
+      if (!task) { setF({ ...f, label: '', dueDate: '' }); setOpen(false); }
+      onDone();
+    } catch (x) { setErr((x as Error).message); }
+  }
+  return (
+    <form class="card task-form" onSubmit={save} style="border-color:var(--agency);margin-bottom:12px">
+      <span class="label" style="color:var(--agency)">{task ? 'Modifier la tâche' : 'Nouvelle tâche'}</span>
+      <input type="text" placeholder="Libellé" value={f.label} required maxLength={200} onInput={(e) => set('label', (e.target as HTMLInputElement).value)} aria-label="Libellé" />
+      <div class="task-form-row">
+        <select value={f.owner} onChange={(e) => set('owner', (e.target as HTMLSelectElement).value)} aria-label="Responsable">
+          <option value="agence">Obsidian Partners</option>
+          <option value="client">Client</option>
+        </select>
+        <select value={f.phase} onChange={(e) => set('phase', (e.target as HTMLSelectElement).value)} aria-label="Phase">
+          <option value="">Sans phase</option>
+          {phases.map((p) => <option value={p.key}>{p.label}</option>)}
+        </select>
+        <select value={f.status} onChange={(e) => set('status', (e.target as HTMLSelectElement).value)} aria-label="Statut">
+          {Object.entries(TASK_STATUS_LABEL).map(([k, l]) => <option value={k}>{l}</option>)}
+        </select>
+        <input type="date" value={f.dueDate ?? ''} onInput={(e) => set('dueDate', (e.target as HTMLInputElement).value)} aria-label="Échéance" />
+        <label class="small" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" checked={f.blocking} onChange={(e) => set('blocking', (e.target as HTMLInputElement).checked)} /> Bloquante</label>
+      </div>
+      {err && <div class="small" style="color:var(--alert)" role="alert">{err}</div>}
+      <div style="display:flex;gap:8px">
+        <button class="btn" type="submit">{task ? 'Enregistrer' : 'Ajouter'}</button>
+        <button class="ghost-btn" type="button" onClick={() => (onCancel ? onCancel() : setOpen(false))}>Annuler</button>
+      </div>
+    </form>
+  );
+}
+
+/** Édition d'une phase de la frise (agence). */
+function PhaseEditor({ clientId, phase, onDone }: { clientId: string; phase: PhaseLite; onDone: () => void }) {
+  const [state, setState] = useState<PhaseState>(phase.state);
+  const [startedAt, setStartedAt] = useState(phase.startedAt ?? '');
+  const [blocker, setBlocker] = useState(phase.blocker ?? '');
+  const [err, setErr] = useState<string | null>(null);
+  async function save(e: Event) {
+    e.preventDefault(); setErr(null);
+    try {
+      await api(`/clients/${clientId}/phases/${phase.key}`, { method: 'PATCH', body: JSON.stringify({ state, startedAt: startedAt || null, blocker: blocker.trim() || null }) });
+      onDone();
+    } catch (x) { setErr((x as Error).message); }
+  }
+  return (
+    <form class="task-form" onSubmit={save} style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <span class="label" style="color:var(--agency)">Phase · {phase.label}</span>
+      <div class="task-form-row">
+        <select value={state} onChange={(e) => setState((e.target as HTMLSelectElement).value as PhaseState)} aria-label="État de la phase">
+          {Object.entries(PHASE_STATE_LABEL).map(([k, l]) => <option value={k}>{l}</option>)}
+        </select>
+        <input type="date" value={startedAt} onInput={(e) => setStartedAt((e.target as HTMLInputElement).value)} aria-label="Date de début" />
+        <input type="text" placeholder="Ce qui bloque (vide si rien)" value={blocker} maxLength={300} onInput={(e) => setBlocker((e.target as HTMLInputElement).value)} aria-label="Blocage" style="flex:1;min-width:200px" />
+      </div>
+      {err && <div class="small" style="color:var(--alert)" role="alert">{err}</div>}
+      <div style="display:flex;gap:8px"><button class="btn" type="submit">Enregistrer la phase</button></div>
+    </form>
   );
 }
 
@@ -168,16 +299,19 @@ export function ConnectionsScreen({ clientId }: { clientId: string }) {
           })}
         </div>
       )}
-      {view === 'agence' && me.user.role === 'agence' && <AgencyConnectionTools clientId={clientId} />}
+      {view === 'agence' && me.user.role === 'agence' && (
+        <AgencyConnectionTools clientId={clientId} knownIds={Object.fromEntries((data?.connections ?? []).map((c) => [c.type, (c as { externalId?: string | null }).externalId ?? '']))} />
+      )}
     </>
   );
 }
 
 /** Vue agence : saisie des jetons (chiffrés, jamais réaffichés) et synchronisation manuelle (§13, §16). */
-function AgencyConnectionTools({ clientId }: { clientId: string }) {
-  const [type, setType] = useState<'ghl' | 'meta'>('ghl');
+function AgencyConnectionTools({ clientId, knownIds }: { clientId: string; knownIds: Record<string, string> }) {
+  const [type, setTypeRaw] = useState<'ghl' | 'meta'>('ghl');
   const [token, setToken] = useState('');
-  const [externalId, setExternalId] = useState('');
+  const [externalId, setExternalId] = useState(knownIds.ghl ?? '');
+  const setType = (t: 'ghl' | 'meta') => { setTypeRaw(t); setExternalId(knownIds[t] ?? ''); };
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   async function save(e: Event) {
@@ -188,10 +322,11 @@ function AgencyConnectionTools({ clientId }: { clientId: string }) {
       setMsg(r.state === 'ok' ? { ok: true, text: 'Jeton enregistré (chiffré) et connexion testée.' } : { ok: false, text: `Jeton enregistré, mais le test a échoué : ${r.error}` });
     } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); }
   }
-  async function sync() {
+  async function sync(fromYearStart = false) {
     setBusy(true); setMsg({ ok: true, text: 'Synchronisation en cours… (quelques secondes à une minute)' });
     try {
-      const r = await api<{ result: { opportunities: number; appointments: number } }>(`/clients/${clientId}/sync`, { method: 'POST', body: '{}' });
+      const body = fromYearStart ? { from: `${new Date().getFullYear()}-01-01` } : {};
+      const r = await api<{ result: { opportunities: number; appointments: number } }>(`/clients/${clientId}/sync`, { method: 'POST', body: JSON.stringify(body) });
       setMsg({ ok: true, text: `Synchronisation GHL terminée : ${r.result.opportunities} opportunités, ${r.result.appointments} rendez-vous lus.` });
     } catch (x) {
       const m = (x as Error).message;
@@ -213,7 +348,8 @@ function AgencyConnectionTools({ clientId }: { clientId: string }) {
         <button class="btn" type="submit" disabled={busy}>Enregistrer et tester</button>
       </form>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn" onClick={sync} disabled={busy}>↻ Synchroniser GHL maintenant (30 derniers jours)</button>
+        <button class="btn" onClick={() => sync(false)} disabled={busy}>↻ Synchroniser GHL maintenant (30 derniers jours)</button>
+        <button class="ghost-btn" onClick={() => sync(true)} disabled={busy}>Reprendre l'historique depuis le 1er janvier</button>
         <span class="small muted">Synchronisation automatique chaque jour à 6 h (Paris).</span>
       </div>
       {msg && <div class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }} role="status">{msg.text}</div>}
