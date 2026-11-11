@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import {
-  DASH, delta, formatDate, formatEuros, formatInt, formatPercent, verdict, type AppointmentCounter, type Thresholds, type Totals,
+  DASH, addDaysYmd, delta, todayParis, formatDate, formatEuros, formatInt, formatPercent, verdict, type AppointmentCounter, type Thresholds, type Totals,
 } from '@obsidian/domain';
 import { useApi } from '../api.ts';
 import { Counter } from '../components/Counter.tsx';
@@ -28,9 +28,16 @@ interface Dashboard {
 
 export function DashboardScreen({ clientId, search }: { clientId: string; search: string }) {
   const initial = Number(new URLSearchParams(search).get('jours')) || 30;
-  const [days, setDays] = useState([7, 30, 90].includes(initial) ? initial : 30);
+  // Période : 7 / 30 / 90 jours, depuis le 1er janvier, ou dates libres (toujours closes à hier au plus tard).
+  const yesterday = addDaysYmd(todayParis(), -1);
+  const [mode, setMode] = useState<string>([7, 30, 90].includes(initial) ? String(initial) : '30');
+  const [custom, setCustom] = useState({ from: `${yesterday.slice(0, 4)}-01-01`, to: yesterday });
+  const [applied, setApplied] = useState(custom);
+  const days = Number(mode) || 30;
+  const query = mode === 'annee' ? `from=${yesterday.slice(0, 4)}-01-01&to=${yesterday}`
+    : mode === 'perso' ? `from=${applied.from}&to=${applied.to}` : `days=${days}`;
   const overview = useApi<ClientOverview>(`/clients/${clientId}`);
-  const { data, error, loading } = useApi<Dashboard>(`/clients/${clientId}/dashboard?days=${days}`);
+  const { data, error, loading } = useApi<Dashboard>(`/clients/${clientId}/dashboard?${query}`);
 
   const NO_DATA = 'Aucune donnée synchronisée sur la période';
   const cur = data?.current?.totals;
@@ -51,7 +58,15 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
         lastSync={data ? data.lastSync : overview.data ? overview.data.lastSync : undefined}
         right={
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <Segmented label="Période" value={days} onChange={setDays} options={[7, 30, 90].map((v) => ({ value: v, label: `${v} j` }))} />
+            <Segmented label="Période" value={mode} onChange={setMode}
+              options={[...['7', '30', '90'].map((v) => ({ value: v, label: `${v} j` })), { value: 'annee', label: 'Depuis janv.' }, { value: 'perso', label: 'Dates…' }]} />
+            {mode === 'perso' && (
+              <form class="date-range" onSubmit={(e) => { e.preventDefault(); if (custom.from <= custom.to) setApplied(custom); }}>
+                <input type="date" aria-label="Du" value={custom.from} max={custom.to} onInput={(e) => setCustom({ ...custom, from: (e.target as HTMLInputElement).value })} />
+                <input type="date" aria-label="Au" value={custom.to} min={custom.from} max={yesterday} onInput={(e) => setCustom({ ...custom, to: (e.target as HTMLInputElement).value })} />
+                <button class="ghost-btn" type="submit">Appliquer</button>
+              </form>
+            )}
             <a class="btn" href={`/c/${clientId}/pilotage?jours=${days}`}>Pilotage détaillé →</a>
           </div>
         }
@@ -67,7 +82,7 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
 
           <div class="section">
             <div class="label" style="margin-bottom:8px">
-              Du {formatDate(data.period.from)} au {formatDate(data.period.to)} · comparé aux {data.period.days} jours précédents
+              Du {formatDate(data.period.from)} au {formatDate(data.period.to)} · {data.period.days} jours, comparés aux {data.period.days} jours précédents
             </div>
             <div class="grid grid-5">
               <KpiCard label="Dépense publicitaire" value={formatEuros(val('spend_cents'))} missingReason={NO_DATA} delta={d('spend_cents')} sub={dv && `CPM ${formatEuros(dv.cpm_cents, { decimals: true })}`} edge="var(--accent)" />

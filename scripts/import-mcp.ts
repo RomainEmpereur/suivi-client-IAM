@@ -19,7 +19,13 @@ interface Config {
   metaCampaignDaily: string;
   accountSpendCheck: string; // ex. "1525.47"
   ghlOpportunities: string[];
-  ghlEvents: string; // [[id, contactId, start, dateAdded, status, nomAffiché, motifExclusion], …]
+  /** Total du compte jour par jour : l'écart avec la somme des campagnes (campagnes supprimées) va dans une ligne dédiée. */
+  metaAccountDaily?: string;
+  ghlEvents: string; // saisie : [[id, contactId, start, dateAdded, status, nomAffiché, motifExclusion], …]
+  /** Exports bruts de GET /calendars/events ; prioritaires sur la saisie. */
+  ghlEventFiles?: string[];
+  /** Préfixes de titre de rendez-vous à exclure comme tests internes. */
+  testTitlePrefixes?: string[];
   postCallStageIds: string[];
   noShowStageIds: string[];
   wonStageIds: string[];
@@ -46,7 +52,7 @@ if (units.size !== 1 || !units.has('EUR')) throw new Error(`Devise inattendue : 
 const from = meta.reduce((m, r) => (r.date_start < m ? r.date_start : m), '9999');
 const to = meta.reduce((m, r) => (r.date_start > m ? r.date_start : m), '0000');
 const spendTotal = meta.reduce((s, r) => s + (r.amount_spent ? cents(r.amount_spent.value) : 0), 0);
-if (spendTotal !== cents(cfg.accountSpendCheck)) {
+if (!cfg.metaAccountDaily && spendTotal !== cents(cfg.accountSpendCheck)) {
   throw new Error(`Contrôle échoué : dépense ${spendTotal} c ≠ total du compte ${cents(cfg.accountSpendCheck)} c`);
 }
 const campaignNames = new Map<string, string>(meta.map((r) => [r.id, r.name]));
@@ -85,6 +91,29 @@ for (const m of meta) {
   r.leads = int(m.lead);
   r.ad_status = m.effective_status ?? null;
 }
+const DELETED = 'supprimees';
+if (cfg.metaAccountDaily) {
+  const accRaw = JSON.parse(readFileSync(cfg.metaAccountDaily, 'utf8'));
+  const acc: any[] = typeof accRaw.ad_entities === 'string' ? JSON.parse(accRaw.ad_entities) : accRaw.ad_entities;
+  campaignNames.set(DELETED, 'Campagnes supprimées ou archivées');
+  const F: [string, string][] = [['impressions', 'impressions'], ['link_click', 'link_clicks'], ['landing_page_view', 'landing_page_views'],
+    ['lead', 'leads'], ['video_play_actions', 'video_plays'], ['video_thruplay_watched_actions', 'thruplays']];
+  for (const a of acc) {
+    const day = a.date_start;
+    const camp = [...rows.values()].filter((r) => r.date === day);
+    const residual: Record<string, number> = { spend_cents: (a.amount_spent ? cents(a.amount_spent.value) : 0) - camp.reduce((x, r) => x + Number(r.spend_cents), 0) };
+    for (const [src, dst] of F) residual[dst] = int(a[src]) - camp.reduce((x, r) => x + Number(r[dst]), 0);
+    if (Object.values(residual).some((v) => v < 0)) throw new Error(`Écart négatif le ${day} : les campagnes dépassent le total du compte`);
+    if (Object.values(residual).every((v) => v === 0)) continue;
+    const r = row(day, DELETED);
+    for (const [k, v] of Object.entries(residual)) r[k] = v;
+    r.spend_original_minor = residual.spend_cents;
+  }
+}
+const totalSpend = [...rows.values()].reduce((x, r) => x + Number(r.spend_cents), 0);
+if (totalSpend !== cents(cfg.accountSpendCheck)) {
+  throw new Error(`Contrôle échoué : dépense importée ${totalSpend} c ≠ total du compte ${cents(cfg.accountSpendCheck)} c`);
+}
 const inWindow = (d: string) => d >= from && d <= to;
 const knownCampaign = (id: string | null | undefined) => (id && campaignNames.has(id) ? id : NR);
 
@@ -95,34 +124,68 @@ const oppCampaign = (o: any): string | null =>
 const isMeta = (o: any) =>
   Boolean(oppCampaign(o)) || /facebook|instagram|meta/i.test(String(o.source ?? '')) ||
   (o.attributions ?? []).some((a: any) => /facebook|ig|instagram/i.test(String(a.utmSource ?? a.adSource ?? '')));
-const byContact = new Map<string, any>(opps.map((o) => [o.contactId, o]));
+const oppsByContact = new Map<string, any[]>();
+for (const o of opps) oppsByContact.set(o.contactId, [...(oppsByContact.get(o.contactId) ?? []), o]);
+/** Opportunité de référence d'un contact : celle qui porte une attribution, sinon la plus ancienne. */
+const refOpp = (contactId: string) => {
+  const list = oppsByContact.get(contactId) ?? [];
+  return list.find((o) => oppCampaign(o)) ?? [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+};
 const sources = new Map<string, number>(); // date|source
 
-for (const o of opps) {
-  const day = parisDay(o.createdAt);
+// Un contact n'est compté qu'une fois (à sa première opportunité), même s'il figure dans deux pipelines.
+for (const [contactId, list] of oppsByContact) {
+  const o = refOpp(contactId);
+  const first = [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  const day = parisDay(first.createdAt);
   if (!inWindow(day)) continue;
   const cr = row(day, knownCampaign(oppCampaign(o)));
   cr.crm_contacts = Number(cr.crm_contacts) + 1;
   const src = isMeta(o) ? 'Meta' : 'Autre';
   sources.set(`${day}|${src}`, (sources.get(`${day}|${src}`) ?? 0) + 1);
-  if (cfg.wonStageIds.includes(o.pipelineStageId) && o.lastStageChangeAt) {
-    const wonDay = parisDay(o.lastStageChangeAt);
+  // Une vente par contact au plus : la première opportunité gagnée.
+  const won = list.filter((x) => cfg.wonStageIds.includes(x.pipelineStageId) && x.lastStageChangeAt)
+    .sort((a, b) => a.lastStageChangeAt.localeCompare(b.lastStageChangeAt))[0];
+  if (won) {
+    const wonDay = parisDay(won.lastStageChangeAt);
     if (inWindow(wonDay)) { const r = row(wonDay, knownCampaign(oppCampaign(o))); r.sales = Number(r.sales) + 1; }
   }
 }
 
 // ─── GoHighLevel : rendez-vous (règle de statut de la décision 0006) ──────────
-const events: [string, string, string, string, string, string, string][] = JSON.parse(readFileSync(cfg.ghlEvents, 'utf8'));
+type Ev = [string, string, string, string, string, string, string];
+const evById = new Map<string, Ev>();
+for (const e of JSON.parse(readFileSync(cfg.ghlEvents, 'utf8')) as Ev[]) evById.set(e[0], e);
+for (const f of cfg.ghlEventFiles ?? []) {
+  for (const e of JSON.parse(readFileSync(f, 'utf8')).data.events) {
+    if (e.deleted) continue;
+    const form = e.appointmentMeta?.defaultFormDetails;
+    const titleName = String(e.title ?? '').split(' - ')[0].split('||')[0].trim();
+    const [fn, ...rest] = (form ? `${form.firstName ?? ''} ${form.lastName ?? ''}` : titleName).trim().split(/\s+/);
+    const display = fn ? `${fn.charAt(0).toUpperCase()}${fn.slice(1).toLowerCase()}${rest.length ? ` ${rest[rest.length - 1].charAt(0).toUpperCase()}.` : ''}` : 'Contact';
+    const isTest = (cfg.testTitlePrefixes ?? []).some((p) => String(e.title ?? '').startsWith(p));
+    evById.set(e.id, [e.id, e.contactId, e.startTime, e.dateAdded, e.appointmentStatus ?? e.appoinmentStatus, isTest ? 'Test interne' : display, isTest ? 'Test interne' : '']);
+  }
+}
+const events: Ev[] = [...evById.values()];
+const lastByContact = new Map<string, string>();
+for (const e of [...events].filter((x) => x[4] !== 'cancelled' && Date.parse(x[2]) <= Date.now()).sort((a, b) => a[2].localeCompare(b[2]))) {
+  lastByContact.set(e[1], e[0]);
+}
 const now = Date.now();
 const apptSql: string[] = [];
 const statusCount: Record<string, number> = {};
 for (const [id, contactId, start, added, ghlStatus, name, excl] of events) {
-  const o = byContact.get(contactId);
-  const stage = o?.pipelineStageId;
+  const o = refOpp(contactId);
+  const stages = (oppsByContact.get(contactId) ?? []).map((x) => x.pipelineStageId);
   let status: string;
   if (ghlStatus === 'cancelled') status = 'annule';
-  else if (ghlStatus === 'noshow' || (stage && cfg.noShowStageIds.includes(stage))) status = 'absent';
-  else if (ghlStatus === 'showed' || (stage && cfg.postCallStageIds.includes(stage))) status = 'honore';
+  else if (ghlStatus === 'noshow') status = 'absent';
+  else if (ghlStatus === 'showed') status = 'honore';
+  // L'étape du pipeline ne renseigne que le DERNIER rendez-vous non annulé du contact ;
+  // une étape d'après appel l'emporte sur « No-show » (le prospect a fini par venir).
+  else if (lastByContact.get(contactId) === id && stages.some((st) => cfg.postCallStageIds.includes(st))) status = 'honore';
+  else if (lastByContact.get(contactId) === id && stages.some((st) => cfg.noShowStageIds.includes(st))) status = 'absent';
   else status = 'prevu';
   if (status === 'honore' && Date.parse(start) > now) status = 'prevu'; // garde-fou : pas d'« honoré » dans le futur
   statusCount[status] = (statusCount[status] ?? 0) + 1;

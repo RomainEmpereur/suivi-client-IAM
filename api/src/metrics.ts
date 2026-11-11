@@ -1,6 +1,13 @@
 import { TOTAL_FIELDS, addDaysYmd, todayParis, type Totals } from '@obsidian/domain';
 import { all, first } from './db.ts';
 
+/** Bornes d'une période libre [from ; to] et de la période précédente de même durée. */
+export function rangeBounds(from: string, to: string) {
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+  const prevTo = addDaysYmd(from, -1);
+  return { from, to, prevFrom: addDaysYmd(prevTo, -(days - 1)), prevTo, days };
+}
+
 /** Bornes d'une période de N jours, close à hier (les données du jour arrivent le lendemain matin). */
 export function periodBounds(days: number, now = new Date()) {
   const today = todayParis(now);

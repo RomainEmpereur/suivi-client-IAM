@@ -1,7 +1,7 @@
 import { formatDate } from '@obsidian/domain';
 
 export interface ClientOverview {
-  client: { id: string; name: string; campaignsLaunchedAt: string | null; isDemo: boolean; onboardingSubmittedAt: string | null };
+  client: { id: string; name: string; status: string; campaignsLaunchedAt: string | null; isDemo: boolean; onboardingSubmittedAt: string | null };
   lastSync: string | null;
   brokenConnections: { type: string; state: string }[];
   overdueClientTasks: { id: string; label: string; due_date: string; blocking: number }[];
@@ -18,7 +18,7 @@ export function ClientAlerts({ clientId, overview }: { clientId: string; overvie
   const broken = overview.brokenConnections.filter((c) => c.state === 'casse');
   return (
     <>
-      {!overview.client.onboardingSubmittedAt && (
+      {!overview.client.onboardingSubmittedAt && ['prospect', 'onboarding', 'build'].includes(overview.client.status) && (
         <a class="banner accent" href={`/c/${clientId}/onboarding`}>
           <span><strong>Première étape : votre onboarding.</strong> Tant qu'il n'est pas envoyé, la production ne peut pas démarrer. Vos réponses sont enregistrées au fil de l'eau.</span>
           <span class="mono small">Remplir le formulaire →</span>

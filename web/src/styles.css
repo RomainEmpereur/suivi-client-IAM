@@ -284,3 +284,5 @@ tr.red td:first-child { box-shadow: inset 3px 0 0 var(--alert); }
 .onb-options input { accent-color: var(--accent); width: 16px; height: 16px; }
 .onb-readonly { white-space: pre-wrap; background: var(--surface-2); border-radius: 7px; padding: 9px 11px; }
 @media (max-width: 980px) { .onb-layout { grid-template-columns: 1fr; } .onb-nav { position: static; } }
+.date-range { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.date-range input { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; font-family: var(--font-mono); font-size: 12.5px; }

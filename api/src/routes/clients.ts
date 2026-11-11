@@ -8,7 +8,7 @@ import { requireAgency } from '../auth.ts';
 import { scopeClient } from '../scope.ts';
 import { all, audit, first, nowIso, run } from '../db.ts';
 import { forbidden, notFound, HttpError } from '../errors.ts';
-import { clientTotals, dailySeries, entityTotals, lastSuccessfulSync, periodBounds } from '../metrics.ts';
+import { clientTotals, dailySeries, entityTotals, lastSuccessfulSync, periodBounds, rangeBounds } from '../metrics.ts';
 import {
   serializeConnection, serializeDeliverable, serializeReco, safeJson,
   type ConnectionRow, type DeliverableRow, type RecoRow,
@@ -44,8 +44,10 @@ clients.get('/:clientId', async (c) => {
 clients.get('/:clientId/dashboard', async (c) => {
   const client = c.get('client');
   const db = c.env.DB;
-  const days = clampDays(c.req.query('days'));
-  const p = periodBounds(days);
+  // Période : ?from=AAAA-MM-JJ&to=AAAA-MM-JJ (personnalisée, 731 jours max) ou ?days=7|14|30|90.
+  const custom = parseRange(c.req.query('from'), c.req.query('to'));
+  const days = custom ? custom.days : clampDays(c.req.query('days'));
+  const p = custom ?? periodBounds(days);
 
   const [current, previous, series, campaigns, pipeline, sources, appts, lastSync] = await Promise.all([
     clientTotals(db, client.id, p.from, p.to),
@@ -61,7 +63,7 @@ clients.get('/:clientId/dashboard', async (c) => {
   ]);
 
   return c.json({
-    period: { days, ...p },
+    period: { ...p, days },
     lastSync,
     current: current && { totals: current, derived: derived(current) },
     previous: previous && { totals: previous, derived: derived(previous) },
@@ -256,6 +258,15 @@ function publicClient(c: ClientRow, view: 'agence' | 'client') {
 
 function parseList(json: string | undefined): string[] {
   try { const v = JSON.parse(json ?? '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; } catch { return []; }
+}
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+function parseRange(from: string | undefined, to: string | undefined) {
+  if (!from || !to || !YMD.test(from) || !YMD.test(to)) return null;
+  if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to)) || from > to) throw new HttpError(400, 'Période invalide.');
+  const r = rangeBounds(from, to);
+  if (r.days > 731) throw new HttpError(400, 'Période trop longue (2 ans maximum).');
+  return r;
 }
 
 function clampDays(q: string | undefined): number {

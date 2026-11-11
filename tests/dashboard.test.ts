@@ -50,3 +50,18 @@ describe('Mesures non synchronisées', () => {
     expect(json.progress).toBeNull();
   });
 });
+
+describe('Période personnalisée', () => {
+  it('accepte une période libre et calcule la période précédente de même durée', async () => {
+    const { call } = setup();
+    const json = await (await call(`/clients/${A}/dashboard?from=2026-01-01&to=2026-01-31`, { as: CLIENT_A })).json() as any;
+    expect(json.period).toMatchObject({ from: '2026-01-01', to: '2026-01-31', days: 31, prevFrom: '2025-12-01', prevTo: '2025-12-31' });
+    expect(json.series).toHaveLength(31);
+  });
+
+  it('refuse une période inversée ou de plus de 2 ans', async () => {
+    const { call } = setup();
+    expect((await call(`/clients/${A}/dashboard?from=2026-02-01&to=2026-01-01`, { as: CLIENT_A })).status).toBe(400);
+    expect((await call(`/clients/${A}/dashboard?from=2023-01-01&to=2026-01-01`, { as: CLIENT_A })).status).toBe(400);
+  });
+});
