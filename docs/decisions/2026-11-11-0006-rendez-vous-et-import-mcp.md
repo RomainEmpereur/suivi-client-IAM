@@ -50,3 +50,15 @@ connexion personnelle. Retenu : jetons de lecture et Worker cron (lot 3) ; MCP p
 - Chaque changement est journalisé (`audit_log`, actions `rdv_statut` et `rdv_ajout`, avant / après).
 - **Un statut posé par l'agence n'est jamais écrasé** : l'import (et la future synchronisation) fait un `ON CONFLICT … DO UPDATE`
   qui conserve statut, inclusion et motif quand `status_source = 'agence'`, et ne supprime plus aucun rendez-vous.
+
+## Reprise des clients existants (12 nov. 2026)
+- 13 espaces créés à la demande de Romain (liste fermée) : CRM Qhare, Vistaflow, Ċawla Studio, Toolkit, Invoicing.Plus
+  (compte Meta « Admin Plus Pub »), Koverio, Civex, Shopinzen, Effinity, Ecommercio (compte « Soft4One »),
+  NWD Production (compte « MyDataNest », en bahts), EA Concept (compte « 103Leads »), Euroinfo (en production, sans chiffres).
+- Meta : jour × campagne + ligne « supprimées ou archivées », contrôle au centime ET jour par jour (dépense, impressions,
+  clics, leads, vues de page) contre le total du compte. Le connecteur MCP ne remplit parfois que la première campagne
+  d'un appel groupé (Civex) : relecture campagne par campagne, puis contrôle.
+- Devises : valeur d'origine, devise et taux conservés ; conversion au taux de référence BCE du jour
+  (api.frankfurter.dev), dernier taux publié pour les jours sans cotation.
+- CRM : colonnes marquées « non synchronisées » (affichées « — ») jusqu'à la reprise GHL, après validation par Romain
+  des étapes de chaque pipeline (R1 planifiée, après appel, no-show, gagné).

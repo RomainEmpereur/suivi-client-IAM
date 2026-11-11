@@ -98,8 +98,8 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
             <div class="grid grid-3" style="margin-top:12px">
               <KpiCard
                 label="Présence aux rendez-vous"
-                value={data.attendance.rate === null ? DASH : formatPercent(data.attendance.rate)}
-                missingReason={data.attendance.reason}
+                value={um.has('appointments_held') || data.attendance.rate === null ? DASH : formatPercent(data.attendance.rate)}
+                missingReason={um.has('appointments_held') ? 'Non synchronisé pour ce client' : data.attendance.reason}
                 sub={<>{data.attendance.upcoming} à venir{data.attendance.missingStatus ? <> · <span style="color:var(--warn)">{data.attendance.missingStatus} sans statut</span></> : null}</>}
               />
               <KpiCard label="Ventes gagnées" value={formatInt(val('sales'))} missingReason={reason('sales')} delta={d('sales')} sub={dv && `Coût d'acquisition ${formatEuros(dv.cac_cents)}`} />

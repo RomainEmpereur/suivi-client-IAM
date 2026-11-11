@@ -211,7 +211,7 @@ function AgencyConnectionTools({ clientId }: { clientId: string }) {
         <button class="btn" type="submit" disabled={busy}>Enregistrer et tester</button>
       </form>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="ghost-btn" onClick={sync} disabled={busy}>Synchroniser GHL maintenant (30 derniers jours)</button>
+        <button class="btn" onClick={sync} disabled={busy}>↻ Synchroniser GHL maintenant (30 derniers jours)</button>
         <span class="small muted">Synchronisation automatique chaque jour à 6 h (Paris).</span>
       </div>
       {msg && <div class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }} role="status">{msg.text}</div>}

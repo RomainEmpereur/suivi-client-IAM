@@ -17,19 +17,23 @@ import { rollupSql } from '../packages/domain/src/index.ts';
 interface Config {
   clientId: string;
   metaCampaignDaily: string;
-  accountSpendCheck: string; // ex. "1525.47"
-  ghlOpportunities: string[];
+  accountSpendCheck: string; // total du compte, dans la devise du compte (ex. "1525.47")
+  /** Devise du compte publicitaire (EUR par défaut). Autre devise → conversion au taux BCE du jour. */
+  currency?: string;
+  /** Réponse JSON de api.frankfurter.dev (base EUR) couvrant la période. */
+  fxRates?: string;
+  ghlOpportunities?: string[];
   /** Total du compte jour par jour : l'écart avec la somme des campagnes (campagnes supprimées) va dans une ligne dédiée. */
   metaAccountDaily?: string;
-  ghlEvents: string; // saisie : [[id, contactId, start, dateAdded, status, nomAffiché, motifExclusion], …]
+  ghlEvents?: string; // saisie : [[id, contactId, start, dateAdded, status, nomAffiché, motifExclusion], …]
   /** Exports bruts de GET /calendars/events ; prioritaires sur la saisie. */
   ghlEventFiles?: string[];
   /** Préfixes de titre de rendez-vous à exclure comme tests internes. */
   testTitlePrefixes?: string[];
-  postCallStageIds: string[];
-  noShowStageIds: string[];
-  wonStageIds: string[];
-  stageOrder: Record<string, [number, string]>;
+  postCallStageIds?: string[];
+  noShowStageIds?: string[];
+  wonStageIds?: string[];
+  stageOrder?: Record<string, [number, string]>;
 }
 
 const cfg: Config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
@@ -48,7 +52,27 @@ const parisDay = (iso: string) =>
 const metaRaw = JSON.parse(readFileSync(cfg.metaCampaignDaily, 'utf8'));
 const meta: any[] = typeof metaRaw.ad_entities === 'string' ? JSON.parse(metaRaw.ad_entities) : metaRaw.ad_entities;
 const units = new Set(meta.filter((r) => r.amount_spent).map((r) => r.amount_spent.unit));
-if (units.size !== 1 || !units.has('EUR')) throw new Error(`Devise inattendue : ${[...units].join(', ')}`);
+const CUR = cfg.currency ?? 'EUR';
+if (units.size !== 1 || !units.has(CUR)) throw new Error(`Devise inattendue : ${[...units].join(', ')} (attendu ${CUR})`);
+// Taux BCE (EUR → devise). Jours sans cotation (week-end, fériés) : dernier taux publié avant le jour.
+const fx = new Map<string, number>();
+if (CUR !== 'EUR') {
+  if (!cfg.fxRates) throw new Error(`Taux de change requis pour ${CUR}`);
+  const r = JSON.parse(readFileSync(cfg.fxRates, 'utf8'));
+  if (r.base !== 'EUR') throw new Error('Taux : base EUR attendue');
+  for (const [d, v] of Object.entries<any>(r.rates)) fx.set(d, Number(v[CUR]));
+}
+const fxDates = [...fx.keys()].sort();
+/** Nombre d'unités de la devise pour 1 EUR, le jour donné. */
+function rateFor(day: string): number {
+  if (CUR === 'EUR') return 1;
+  let best: string | null = null;
+  for (const d of fxDates) { if (d <= day) best = d; else break; }
+  if (!best) throw new Error(`Aucun taux ${CUR} disponible au ${day}`);
+  return fx.get(best)!;
+}
+/** Montant en unités mineures de la devise → centimes d'euro. */
+const toEurCents = (minor: number, day: string) => Math.round(minor / rateFor(day));
 const from = meta.reduce((m, r) => (r.date_start < m ? r.date_start : m), '9999');
 const to = meta.reduce((m, r) => (r.date_start > m ? r.date_start : m), '0000');
 const spendTotal = meta.reduce((s, r) => s + (r.amount_spent ? cents(r.amount_spent.value) : 0), 0);
@@ -84,7 +108,8 @@ for (const m of meta) {
   const imp = int(m.impressions);
   if (!spend && !imp && !int(m.lead)) continue;
   const r = row(m.date_start, m.id);
-  r.spend_cents = spend; r.spend_original_minor = spend;
+  r.spend_original_minor = spend; r.currency = CUR; r.fx_rate_to_eur = 1 / rateFor(m.date_start);
+  r.spend_cents = toEurCents(spend, m.date_start);
   r.impressions = imp; r.frequency = m.frequency ? Number(m.frequency) : null;
   r.link_clicks = int(m.link_click); r.landing_page_views = int(m.landing_page_view);
   r.video_plays = int(m.video_play_actions); r.thruplays = int(m.video_thruplay_watched_actions);
@@ -101,24 +126,27 @@ if (cfg.metaAccountDaily) {
   for (const a of acc) {
     const day = a.date_start;
     const camp = [...rows.values()].filter((r) => r.date === day);
-    const residual: Record<string, number> = { spend_cents: (a.amount_spent ? cents(a.amount_spent.value) : 0) - camp.reduce((x, r) => x + Number(r.spend_cents), 0) };
+    const residualMinor = (a.amount_spent ? cents(a.amount_spent.value) : 0) - camp.reduce((x, r) => x + Number(r.spend_original_minor), 0);
+    const residual: Record<string, number> = { spend_cents: toEurCents(residualMinor, day) };
     for (const [src, dst] of F) residual[dst] = int(a[src]) - camp.reduce((x, r) => x + Number(r[dst]), 0);
     if (Object.values(residual).some((v) => v < 0)) throw new Error(`Écart négatif le ${day} : les campagnes dépassent le total du compte`);
     if (Object.values(residual).every((v) => v === 0)) continue;
     const r = row(day, DELETED);
     for (const [k, v] of Object.entries(residual)) r[k] = v;
-    r.spend_original_minor = residual.spend_cents;
+    if (residualMinor < 0) throw new Error(`Écart négatif le ${day}`);
+    r.spend_original_minor = residualMinor; r.currency = CUR; r.fx_rate_to_eur = 1 / rateFor(day);
   }
 }
-const totalSpend = [...rows.values()].reduce((x, r) => x + Number(r.spend_cents), 0);
-if (totalSpend !== cents(cfg.accountSpendCheck)) {
-  throw new Error(`Contrôle échoué : dépense importée ${totalSpend} c ≠ total du compte ${cents(cfg.accountSpendCheck)} c`);
+// Contrôle au centime, dans la devise du compte.
+const totalOriginal = [...rows.values()].reduce((x, r) => x + Number(r.spend_original_minor), 0);
+if (totalOriginal !== cents(cfg.accountSpendCheck)) {
+  throw new Error(`Contrôle échoué : dépense importée ${totalOriginal} ≠ total du compte ${cents(cfg.accountSpendCheck)} (${CUR}, unités mineures)`);
 }
 const inWindow = (d: string) => d >= from && d <= to;
 const knownCampaign = (id: string | null | undefined) => (id && campaignNames.has(id) ? id : NR);
 
 // ─── GoHighLevel : opportunités ────────────────────────────────────────────
-const opps: any[] = cfg.ghlOpportunities.flatMap((f) => JSON.parse(readFileSync(f, 'utf8')).data.opportunities);
+const opps: any[] = (cfg.ghlOpportunities ?? []).flatMap((f) => JSON.parse(readFileSync(f, 'utf8')).data.opportunities);
 const oppCampaign = (o: any): string | null =>
   (o.attributions ?? []).find((a: any) => a.utmCampaignId)?.utmCampaignId ?? null;
 const isMeta = (o: any) =>
@@ -144,7 +172,7 @@ for (const [contactId, list] of oppsByContact) {
   const src = isMeta(o) ? 'Meta' : 'Autre';
   sources.set(`${day}|${src}`, (sources.get(`${day}|${src}`) ?? 0) + 1);
   // Une vente par contact au plus : la première opportunité gagnée.
-  const won = list.filter((x) => cfg.wonStageIds.includes(x.pipelineStageId) && x.lastStageChangeAt)
+  const won = list.filter((x) => (cfg.wonStageIds ?? []).includes(x.pipelineStageId) && x.lastStageChangeAt)
     .sort((a, b) => a.lastStageChangeAt.localeCompare(b.lastStageChangeAt))[0];
   if (won) {
     const wonDay = parisDay(won.lastStageChangeAt);
@@ -155,7 +183,7 @@ for (const [contactId, list] of oppsByContact) {
 // ─── GoHighLevel : rendez-vous (règle de statut de la décision 0006) ──────────
 type Ev = [string, string, string, string, string, string, string];
 const evById = new Map<string, Ev>();
-for (const e of JSON.parse(readFileSync(cfg.ghlEvents, 'utf8')) as Ev[]) evById.set(e[0], e);
+for (const e of (cfg.ghlEvents ? JSON.parse(readFileSync(cfg.ghlEvents, 'utf8')) : []) as Ev[]) evById.set(e[0], e);
 for (const f of cfg.ghlEventFiles ?? []) {
   for (const e of JSON.parse(readFileSync(f, 'utf8')).data.events) {
     if (e.deleted) continue;
@@ -184,8 +212,8 @@ for (const [id, contactId, start, added, ghlStatus, name, excl] of events) {
   else if (ghlStatus === 'showed') status = 'honore';
   // L'étape du pipeline ne renseigne que le DERNIER rendez-vous non annulé du contact ;
   // une étape d'après appel l'emporte sur « No-show » (le prospect a fini par venir).
-  else if (lastByContact.get(contactId) === id && stages.some((st) => cfg.postCallStageIds.includes(st))) status = 'honore';
-  else if (lastByContact.get(contactId) === id && stages.some((st) => cfg.noShowStageIds.includes(st))) status = 'absent';
+  else if (lastByContact.get(contactId) === id && stages.some((st) => (cfg.postCallStageIds ?? []).includes(st))) status = 'honore';
+  else if (lastByContact.get(contactId) === id && stages.some((st) => (cfg.noShowStageIds ?? []).includes(st))) status = 'absent';
   else status = 'prevu';
   if (status === 'honore' && Date.parse(start) > now) status = 'prevu'; // garde-fou : pas d'« honoré » dans le futur
   statusCount[status] = (statusCount[status] ?? 0) + 1;
@@ -233,7 +261,7 @@ for (const [k, n] of sources) {
   const [date, source] = k.split('|');
   out.push(`INSERT INTO contact_sources_daily (client_id, date, source, contacts) VALUES (${q(cfg.clientId)}, ${q(date)}, ${q(source)}, ${n});`);
 }
-for (const [stageId, [pos, name]] of Object.entries(cfg.stageOrder)) {
+for (const [stageId, [pos, name]] of Object.entries(cfg.stageOrder ?? {})) {
   out.push(`INSERT INTO pipeline_snapshot (client_id, stage_order, stage_name, open_opportunities) VALUES (${q(cfg.clientId)}, ${pos}, ${q(name)}, ${openByStage.get(stageId) ?? 0});`);
 }
 out.push(rollupSql(cfg.clientId, from, to));
