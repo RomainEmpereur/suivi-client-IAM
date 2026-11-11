@@ -8,7 +8,7 @@ import { useSession } from '../session.ts';
 import { Counter } from '../components/Counter.tsx';
 import { CONNECTION_LABEL, type ClientOverview } from '../components/ClientAlerts.tsx';
 import {
-  AgencyNote, DataTable, EmptyState, ErrorBox, Loading, PageHead, Pill, SEVERITY_EDGE, SEVERITY_LABEL, SectionTitle,
+  AgencyNote, DataTable, EmptyState, ErrorBox, Loading, PageHead, Pill, SEVERITY_EDGE, SEVERITY_LABEL, SectionTitle, Segmented,
 } from '../components/ui.tsx';
 
 /** undefined tant que l'aperçu n'est pas chargé (ou refusé) : on n'affiche alors aucune date. */
@@ -197,37 +197,99 @@ export function GuidesScreen({ clientId }: { clientId: string }) {
   );
 }
 
-// ─────────────────────────── Rendez-vous (liste datée, §8 et §16) ───────────────────────────
+// ─────────────────────────── Rendez-vous (liste datée, §8 et §16 ; gestion, décision 0006) ───────────────────────────
 
 const APPT_STATUS: Record<string, string> = { prevu: 'Prévu', annule: 'Annulé', honore: 'Honoré', absent: 'Absent' };
 
+interface ApptItem {
+  id: string; contact_name: string | null; booked_at: string; scheduled_at: string; status: string;
+  counts_toward_target: number; exclusion_reason: string | null; origin: string; status_source: string; status_updated_at: string | null;
+}
+
 export function AppointmentsScreen({ clientId }: { clientId: string }) {
-  const { data, error } = useApi<{ counter: AppointmentCounter; appointments: { id: string; contact_name: string | null; booked_at: string; scheduled_at: string; status: string; counts_toward_target: number; exclusion_reason: string | null }[] }>(`/clients/${clientId}/appointments`);
+  const { data, error, reload } = useApi<{ counter: AppointmentCounter; appointments: ApptItem[] }>(`/clients/${clientId}/appointments`);
+  const { me, view } = useSession();
   const lastSync = useLastSync(clientId);
+  const [filter, setFilter] = useState<'tous' | 'a_renseigner' | 'a_venir'>('tous');
+  const [err, setErr] = useState<string | null>(null);
+  const canEdit = me.user.role === 'agence' && view === 'agence';
+  const canAdd = me.user.role === 'client' || canEdit;
   const now = Date.now();
+  const missing = (a: ApptItem) => a.status === 'prevu' && Date.parse(a.scheduled_at) < now;
+  const rows = (data?.appointments ?? []).filter((a) =>
+    filter === 'a_renseigner' ? missing(a) : filter === 'a_venir' ? Date.parse(a.scheduled_at) >= now && a.status === 'prevu' : true);
+  const missingCount = (data?.appointments ?? []).filter(missing).length;
+
+  async function patch(a: ApptItem, body: Record<string, unknown>) {
+    setErr(null);
+    try {
+      await api(`/clients/${clientId}/appointments/${a.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      reload();
+    } catch (e) { setErr((e as Error).message); }
+  }
+  function toggleCount(a: ApptItem) {
+    if (a.counts_toward_target) {
+      const reason = prompt('Motif de l\'exclusion du compteur (ex. hors cible, doublon, test) :');
+      if (!reason?.trim()) return;
+      patch(a, { countsTowardTarget: false, exclusionReason: reason.trim() });
+    } else patch(a, { countsTowardTarget: true });
+  }
+
   return (
     <>
       <PageHead a="Rendez-vous" b="datés" lastSync={lastSync} sub="La liste qui fonde le compteur contractuel. C'est la seule page nominative de l'espace." />
       {error && <ErrorBox error={error} />}
+      {err && <div class="banner alert" role="alert">{err}</div>}
       {data && (
         <>
           {data.counter.windowStart && <Counter clientId={clientId} counter={data.counter} />}
-          <div class="section">
+          {missingCount > 0 && (
+            <div class="banner warn">
+              <span><strong>{missingCount} rendez-vous passé{missingCount > 1 ? 's' : ''} sans statut.</strong> {canEdit ? 'Indiquez s\'ils ont été honorés : sans cela, ils ne comptent pas.' : 'Obsidian Partners les renseigne ; tant que ce n\'est pas fait, ils ne comptent pas.'}</span>
+              <button class="ghost-btn" onClick={() => setFilter('a_renseigner')}>Afficher</button>
+            </div>
+          )}
+          <div class="section" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+            <Segmented label="Filtre" value={filter} onChange={setFilter} options={[
+              { value: 'tous', label: `Tous (${data.appointments.length})` },
+              { value: 'a_renseigner', label: `À renseigner (${missingCount})` },
+              { value: 'a_venir', label: 'À venir' },
+            ]} />
+            {canAdd && <AddAppointment clientId={clientId} onDone={reload} />}
+          </div>
+          <div style="margin-top:12px">
             <DataTable
               caption="Rendez-vous"
-              rows={data.appointments}
+              rows={rows}
               initialSort={{ key: 'scheduled', dir: 'desc' }}
+              rowClass={(r) => (missing(r) ? 'warn' : '')}
               columns={[
                 { key: 'contact', label: 'Contact', value: (r) => r.contact_name ?? '—' },
                 { key: 'scheduled', label: 'Rendez-vous', value: (r) => r.scheduled_at, render: (r) => formatDateTime(r.scheduled_at) },
                 { key: 'booked', label: 'Pris le', value: (r) => r.booked_at, render: (r) => formatDate(r.booked_at) },
                 {
                   key: 'status', label: 'Statut', value: (r) => r.status,
-                  render: (r) => r.status === 'prevu' && Date.parse(r.scheduled_at) < now ? <span style="color:var(--warn)">Statut manquant</span> : APPT_STATUS[r.status],
+                  render: (r) => canEdit ? (
+                    <select class="client-select" style="width:auto;padding:4px 8px" value={r.status} aria-label={`Statut du rendez-vous de ${r.contact_name ?? 'ce contact'}`}
+                      onChange={(e) => patch(r, { status: (e.target as HTMLSelectElement).value })}>
+                      {Object.entries(APPT_STATUS).map(([k, l]) => (
+                        <option value={k} disabled={(k === 'honore' || k === 'absent') && Date.parse(r.scheduled_at) > now}>{l}{k === 'prevu' && missing(r) ? ' — à renseigner' : ''}</option>
+                      ))}
+                    </select>
+                  ) : missing(r) ? <span style="color:var(--warn)">Statut à renseigner</span> : APPT_STATUS[r.status],
                 },
                 {
                   key: 'counts', label: 'Compte dans les 30', value: (r) => (r.status === 'honore' && r.counts_toward_target ? 1 : 0),
-                  render: (r) => !r.counts_toward_target ? <span class="muted">Exclu · {r.exclusion_reason}</span> : r.status === 'honore' ? 'Oui' : 'Non',
+                  render: (r) => (
+                    <span style="display:inline-flex;gap:8px;align-items:center">
+                      {!r.counts_toward_target ? <span class="muted">Exclu · {r.exclusion_reason}</span> : r.status === 'honore' ? <span style="color:var(--accent)">Oui</span> : 'Non'}
+                      {canEdit && <button class="ghost-btn small" onClick={() => toggleCount(r)}>{r.counts_toward_target ? 'Exclure…' : 'Réintégrer'}</button>}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'source', label: 'Source', value: (r) => r.origin,
+                  render: (r) => <span class="mono small muted">{r.origin === 'saisie' ? 'Saisi' : 'GHL'}{r.status_source === 'agence' ? ' · statut agence' : ''}</span>,
                 },
               ]}
             />
@@ -235,6 +297,31 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
         </>
       )}
     </>
+  );
+}
+
+function AddAppointment({ clientId, onDone }: { clientId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [when, setWhen] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  if (!open) return <button class="btn" onClick={() => setOpen(true)}>Ajouter un rendez-vous</button>;
+  async function send(e: Event) {
+    e.preventDefault(); setErr(null);
+    try {
+      // La saisie datetime-local est l'heure de Paris du navigateur ; on l'envoie en ISO.
+      await api(`/clients/${clientId}/appointments`, { method: 'POST', body: JSON.stringify({ contactName: name, scheduledAt: new Date(when).toISOString() }) });
+      setOpen(false); setName(''); setWhen(''); onDone();
+    } catch (x) { setErr((x as Error).message); }
+  }
+  return (
+    <form class="card date-range" onSubmit={send} style="padding:10px 12px">
+      <input type="text" placeholder="Prénom N. du contact" value={name} required onInput={(e) => setName((e.target as HTMLInputElement).value)} aria-label="Contact" />
+      <input type="datetime-local" value={when} required onInput={(e) => setWhen((e.target as HTMLInputElement).value)} aria-label="Date et heure" />
+      <button class="btn" type="submit">Ajouter</button>
+      <button class="ghost-btn" type="button" onClick={() => setOpen(false)}>Annuler</button>
+      {err && <span class="small" style="color:var(--alert)">{err}</span>}
+    </form>
   );
 }
 

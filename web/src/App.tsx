@@ -13,7 +13,7 @@ import {
 const NAV = [
   { group: 'Accueil', items: [
     ['tableau-de-bord', 'Tableau de bord'], ['pilotage', 'Pilotage'], ['infrastructure', 'Infrastructure'],
-    ['rapport', 'Rapport'], ['connexions', 'Connexions'],
+    ['rendez-vous', 'Rendez-vous'], ['rapport', 'Rapport'], ['connexions', 'Connexions'],
   ] },
   { group: 'Démarrage et aide', items: [['onboarding', 'Onboarding'], ['guides', 'Guides'], ['feedback', 'Feedback']] },
 ] as const;

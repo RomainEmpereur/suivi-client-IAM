@@ -195,7 +195,14 @@ for (const [id, contactId, start, added, ghlStatus, name, excl] of events) {
     q(`ap_${cfg.clientId}_${id}`), q(cfg.clientId), q(id), q(name), q(new Date(added).toISOString()), q(new Date(start).toISOString()),
     q(status), q(campaign), q(o ? (o.attributions ?? []).find((a: any) => a.utmAdId)?.utmAdId ?? null : null),
     isTest ? 0 : 1, q(excl || null),
-  ].join(', ')});`);
+  ].join(', ')})
+    ON CONFLICT (client_id, ghl_appointment_id) DO UPDATE SET
+      contact_name = excluded.contact_name, booked_at = excluded.booked_at, scheduled_at = excluded.scheduled_at,
+      campaign_id = excluded.campaign_id, ad_id = excluded.ad_id,
+      status = CASE WHEN appointments.status_source = 'agence' THEN appointments.status ELSE excluded.status END,
+      counts_toward_target = CASE WHEN appointments.status_source = 'agence' THEN appointments.counts_toward_target ELSE excluded.counts_toward_target END,
+      exclusion_reason = CASE WHEN appointments.status_source = 'agence' THEN appointments.exclusion_reason ELSE excluded.exclusion_reason END,
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now');`);
   if (isTest) continue; // un test n'est pas un rendez-vous pris
   const bookedDay = parisDay(added);
   if (inWindow(bookedDay)) {
@@ -214,7 +221,7 @@ const out: string[] = [];
 out.push(`-- Import ponctuel MCP — client ${cfg.clientId} — fenêtre ${from} → ${to} — généré le ${new Date().toISOString()}`);
 out.push(`DELETE FROM metrics_daily WHERE client_id = ${q(cfg.clientId)} AND source = 'mcp';`);
 out.push(`DELETE FROM metrics_rollup WHERE client_id = ${q(cfg.clientId)};`);
-out.push(`DELETE FROM appointments WHERE client_id = ${q(cfg.clientId)};`);
+// Les rendez-vous ne sont jamais supprimés : mise à jour, en conservant les statuts posés par l'agence et les saisies.
 out.push(`DELETE FROM pipeline_snapshot WHERE client_id = ${q(cfg.clientId)};`);
 out.push(`DELETE FROM contact_sources_daily WHERE client_id = ${q(cfg.clientId)};`);
 for (const r of rows.values()) {

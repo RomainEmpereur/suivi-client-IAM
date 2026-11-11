@@ -38,3 +38,15 @@ Date : 11 nov. 2026 · Statut : appliquée (réponses de Romain du 11 nov. aux q
 ## Pourquoi pas une lecture MCP planifiée comme mécanisme définitif
 Données groupées non fiables (constat ci-dessus), connecteur Meta capable d'écrire, coût par passage, dépendance à une
 connexion personnelle. Retenu : jetons de lecture et Worker cron (lot 3) ; MCP pour l'exploration et les imports ponctuels.
+
+## Mise en œuvre (12 nov. 2026)
+- Écran **Rendez-vous** (barre latérale) : filtres « Tous / À renseigner / À venir », bandeau du nombre de rendez-vous
+  passés sans statut.
+- **Agence** : statut par liste déroulante (prévu, honoré, absent, annulé ; honoré et absent interdits pour un rendez-vous
+  futur), exclusion du compteur avec motif obligatoire, réintégration. `PATCH /api/clients/:id/appointments/:rdv`.
+- **Client et agence** : ajout d'un rendez-vous (« prévu », origine `saisie`). `POST /api/clients/:id/appointments`.
+  Le client ne pose jamais de statut ; la vue client reste en lecture seule.
+- Migration 0004 : `origin`, `created_by_user_id`, `status_source` (`ghl` | `agence` | `client`), `status_updated_at/by`.
+- Chaque changement est journalisé (`audit_log`, actions `rdv_statut` et `rdv_ajout`, avant / après).
+- **Un statut posé par l'agence n'est jamais écrasé** : l'import (et la future synchronisation) fait un `ON CONFLICT … DO UPDATE`
+  qui conserve statut, inclusion et motif quand `status_source = 'agence'`, et ne supprime plus aucun rendez-vous.

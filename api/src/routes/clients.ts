@@ -87,7 +87,8 @@ clients.get('/:clientId/appointments', async (c) => {
   const client = c.get('client');
   const rows = await all<AppointmentLike & { id: string; contact_name: string | null; booked_at: string; exclusion_reason: string | null }>(
     c.env.DB,
-    `SELECT id, contact_name, booked_at, scheduled_at, status, counts_toward_target, exclusion_reason
+    `SELECT id, contact_name, booked_at, scheduled_at, status, counts_toward_target, exclusion_reason,
+            origin, status_source, status_updated_at
      FROM appointments WHERE client_id = ?1 ORDER BY scheduled_at DESC`,
     client.id,
   );
