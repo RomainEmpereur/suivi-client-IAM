@@ -16,7 +16,8 @@
     "typecheck": "tsc -p api && tsc -p web && tsc -p tests",
     "test": "vitest run",
     "build:worker": "npm run build -w web && node scripts/embed-web.mjs",
-    "deploy:demo": "npm run build:worker && cd api && wrangler deploy --env demo"
+    "deploy:demo": "npm run build:worker && cd api && wrangler deploy --env demo",
+    "deploy:production": "npm run build:worker && cd api && wrangler deploy --env production"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

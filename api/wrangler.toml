@@ -40,6 +40,7 @@ migrations_dir = "../db/migrations"
 # ─── Production : vrais clients, aucune donnée de démonstration ───
 [env.production]
 name = "espace-obsidian"
+workers_dev = true        # https://espace-obsidian.obsidianpartners.workers.dev, en attendant espace.obsidianpartners.fr
 preview_urls = false
 main = "src/worker.ts"   # API + interface intégrée (npm run build:worker)
 # routes = [{ pattern = "espace.obsidianpartners.fr", custom_domain = true }]
@@ -47,13 +48,14 @@ main = "src/worker.ts"   # API + interface intégrée (npm run build:worker)
 [env.production.vars]
 ENVIRONMENT = "production"
 DEV_AUTH = "0"
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+ACCESS_TEAM_DOMAIN = "infrastructure-acquisition.cloudflareaccess.com"
+# AUD de l'application Access « Espace Obsidian — production » (identifiant public, pas un secret)
+ACCESS_AUD = "6b6a35235e43e249d7f21421433404944036eca9007a8a6cfba6c2e744434a1c"
 
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "espace-obsidian"
-database_id = "00000000-0000-0000-0000-000000000000"   # à créer au moment de la mise en production
+database_id = "f6ed1704-2286-4e12-868b-c1c2cf79b4e0"
 migrations_dir = "../db/migrations"
 
 # Lot 3 : [triggers] crons = ["0 4,5 * * *"]  (6 h 00 Europe/Paris, été comme hiver — filtré dans le job)
