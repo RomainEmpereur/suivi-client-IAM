@@ -249,6 +249,8 @@ function publicClient(c: ClientRow, view: 'agence' | 'client') {
     appointmentTarget: c.appointment_target, windowDays: c.window_days,
     currency: c.ad_account_currency, timezone: c.ad_account_timezone, isDemo: Boolean(c.is_demo),
     onboardingSubmittedAt: c.onboarding_submitted_at ?? null,
+    // Seuls les liens Google Drive sont servis.
+    driveFolderUrl: c.drive_folder_url && /^https:\/\/drive\.google\.com\//.test(c.drive_folder_url) ? c.drive_folder_url : null,
   };
   if (view === 'client') return base;
   return {

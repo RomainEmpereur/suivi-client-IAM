@@ -146,3 +146,16 @@ describe('Démo en ligne', () => {
     expect((await call('/me', { as: AGENCE, headers: { 'Cf-Access-Jwt-Assertion': 'faux.jeton.signe' } })).status).toBe(401);
   });
 });
+
+describe('Dossier Drive du projet', () => {
+  it("n'expose qu'un lien Google Drive, et seulement au client concerné", async () => {
+    const { call, raw } = setup();
+    raw.prepare(`UPDATE clients SET drive_folder_url = 'https://drive.google.com/drive/folders/abc' WHERE id = ?`).run(A);
+    raw.prepare(`UPDATE clients SET drive_folder_url = 'javascript:alert(1)' WHERE id = ?`).run(B);
+    const a = await (await call(`/clients/${A}`, { as: CLIENT_A })).json() as any;
+    expect(a.client.driveFolderUrl).toBe('https://drive.google.com/drive/folders/abc');
+    const b = await (await call(`/clients/${B}`, { as: CLIENT_B })).json() as any;
+    expect(b.client.driveFolderUrl).toBeNull();
+    expect((await call(`/clients/${A}`, { as: CLIENT_B })).status).toBe(404);
+  });
+});

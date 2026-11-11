@@ -38,6 +38,7 @@ export interface ClientRow {
   onboarding_submitted_at?: string | null;
   unmeasured_json?: string;
   ghl_config_json?: string;
+  drive_folder_url?: string | null;
   is_demo: number;
 }
 

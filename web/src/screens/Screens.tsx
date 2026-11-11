@@ -25,6 +25,7 @@ interface Task { id: string; label: string; description: string | null; status: 
 
 export function InfrastructureScreen({ clientId }: { clientId: string }) {
   const { data, error, loading, reload } = useApi<Infra>(`/clients/${clientId}/infrastructure`);
+  const drive = useApi<{ client: { driveFolderUrl: string | null } }>(`/clients/${clientId}`).data?.client.driveFolderUrl ?? null;
   const { me, view } = useSession();
   const lastSync = useLastSync(clientId);
   const canTick = (owner: 'agence' | 'client') => (me.user.role === 'client' && owner === 'client') || (me.user.role === 'agence' && view === 'agence');
@@ -42,7 +43,8 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
   const current = data?.phases.find((p) => p.state === 'en_cours');
   return (
     <>
-      <PageHead a="Votre" b="infrastructure" lastSync={lastSync} sub="Ce qui est livré, ce qui est en cours, et ce qu'on attend de vous." />
+      <PageHead a="Votre" b="infrastructure" lastSync={lastSync} sub="Ce qui est livré, ce qui est en cours, et ce qu'on attend de vous."
+        right={drive && <a class="btn" href={drive} target="_blank" rel="noopener noreferrer">Ouvrir le dossier Drive du projet ↗</a>} />
       {error && <ErrorBox error={error} />}
       {loading && !data && <Loading />}
       {data && (
