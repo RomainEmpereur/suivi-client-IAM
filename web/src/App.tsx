@@ -6,6 +6,7 @@ import { store } from './store.ts';
 import { ErrorBox, Loading } from './components/ui.tsx';
 import { DashboardScreen } from './screens/Dashboard.tsx';
 import { OnboardingScreen } from './screens/Onboarding.tsx';
+import { DeliveryScreen } from './screens/Delivery.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -112,6 +113,12 @@ function Shell() {
             ))}
           </nav>
         ))}
+        {activeClient && isAgency && view === 'agence' && (
+          <nav class="nav-group" aria-label="Agence">
+            <span class="label">Agence</span>
+            <a class="nav-link" href={`/c/${activeClient}/delivery`} aria-current={clientId && screen === 'delivery' ? 'page' : undefined}>Delivery</a>
+          </nav>
+        )}
 
         <div class="sidebar-foot">
           <button class="ghost-btn" onClick={toggleTheme}>{theme === 'light' ? 'Mode nuit' : 'Mode jour'}</button>
@@ -141,6 +148,7 @@ function ClientScreen({ clientId, screen, search }: { clientId: string; screen: 
     case 'rapport': return <LaterScreen clientId={clientId} a="Rapport" b="de période" lot={7}>Tableau comparatif hebdomadaire ou mensuel, analyse de l'agence et export PDF figé.</LaterScreen>;
     case 'feedback': return <LaterScreen clientId={clientId} a="Vos" b="retours" lot={7}>Formulaire de retour (bug, résultat, demande, question) et suivi des réponses de l'agence.</LaterScreen>;
     case 'onboarding': return <OnboardingScreen clientId={clientId} />;
+    case 'delivery': return <DeliveryScreen clientId={clientId} />;
     default: return <LaterScreen clientId={clientId} a="Page" b="introuvable" lot={1}>Cette page n'existe pas.</LaterScreen>;
   }
 }

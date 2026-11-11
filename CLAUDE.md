@@ -10,6 +10,7 @@ Lire `docs/cahier-des-charges.md` (il fait foi) et `docs/decisions/` avant toute
 - Gestion des rendez-vous livrée (décision 0006) : l'agence pose les statuts dans l'espace ; **un statut posé par l'agence n'est jamais écrasé** par un import ou une synchronisation.
 - Lot 3, partie GHL construite (décision 0007) : client lecture seule `packages/ghl`, synchro `jobs/sync-daily`, jetons chiffrés (secret `TOKEN_ENCRYPTION_KEY`), cron 6 h Paris. Meta à brancher.
 - Lot 2 en cours : formulaire d'onboarding (décision 0004) et édition agence des tâches et phases livrés. Restent les ressources (R2), l'édition des livrables, les commentaires sur livrable.
+- Delivery piloté par l'espace (décision 0008) : rédaction dans le projet Claude, l'espace vérifie les conditions (onboarding + infos de base), enchaîne les étapes 0 à 8 du master prompt (`docs/delivery/master-prompt.md`, intégré par `scripts/embed-master-prompt.mjs`), prépare les briefs et suit la validation. Ressources non bloquantes.
 - Le formulaire se définit **uniquement** dans `packages/domain/src/onboarding.ts` ; les clés de question sont stables (jamais renommées).
 - Défauts §20 appliqués : décision 0003.
 - Le rendez-vous validé se définit **uniquement** dans `packages/domain/src/appointments.ts`.
