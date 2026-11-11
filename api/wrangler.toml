@@ -1,36 +1,58 @@
-# Worker de l'API — Espace Obsidian Partners
+# Worker de l'espace Obsidian Partners — sert l'API (/api/*) ET l'interface (intégrée au script) sur un seul domaine.
 # Aucun secret ici : `wrangler secret put` uniquement (voir README).
 name = "espace-obsidian-api"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 
+# ─── Développement local (Vite sert l'interface sur :5173) ────
 [vars]
 ENVIRONMENT = "development"
-# Connexion de développement par en-tête X-Dev-User : refusée hors ENVIRONMENT=development.
+# Connexion de développement par en-tête X-Dev-User : refusée en production.
 DEV_AUTH = "1"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "espace-obsidian"
-database_id = "00000000-0000-0000-0000-000000000000"   # remplacé par l'id réel après `wrangler d1 create`
+database_id = "00000000-0000-0000-0000-000000000000"   # base locale uniquement
 migrations_dir = "../db/migrations"
 
-# ─── Production ───────────────────────────────────────────────
+# ─── Démo en ligne : données fictives uniquement, derrière Cloudflare Access ───
+# Après la connexion Access, on choisit une identité de démonstration (*.demo.local).
+[env.demo]
+name = "espace-obsidian-demo"
+workers_dev = true
+preview_urls = false   # pas d'adresse secondaire hors de la protection Access
+main = "src/worker.ts"   # API + interface intégrée (npm run build:worker)
+
+[env.demo.vars]
+ENVIRONMENT = "demo"
+DEV_AUTH = "1"
+ACCESS_TEAM_DOMAIN = ""     # renseigné quand Access est activé (ex. obsidianpartners.cloudflareaccess.com)
+ACCESS_AUD = ""             # « Application Audience (AUD) Tag » de l'application Access
+
+[[env.demo.d1_databases]]
+binding = "DB"
+database_name = "espace-obsidian-demo"
+database_id = "67a23350-d58a-49a0-8f96-62ea222cd71c"
+migrations_dir = "../db/migrations"
+
+# ─── Production : vrais clients, aucune donnée de démonstration ───
 [env.production]
-name = "espace-obsidian-api"
-# Route /api/* sur le même domaine que le front (Cloudflare Pages) : un seul domaine protégé par Access.
-# routes = [{ pattern = "espace.obsidianpartners.fr/api/*", zone_name = "obsidianpartners.fr" }]
+name = "espace-obsidian"
+preview_urls = false
+main = "src/worker.ts"   # API + interface intégrée (npm run build:worker)
+# routes = [{ pattern = "espace.obsidianpartners.fr", custom_domain = true }]
 
 [env.production.vars]
 ENVIRONMENT = "production"
 DEV_AUTH = "0"
-ACCESS_TEAM_DOMAIN = ""     # ex. obsidianpartners.cloudflareaccess.com
-ACCESS_AUD = ""             # « Application Audience (AUD) Tag » de l'application Access
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
 
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "espace-obsidian"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "00000000-0000-0000-0000-000000000000"   # à créer au moment de la mise en production
 migrations_dir = "../db/migrations"
 
 # Lot 3 : [triggers] crons = ["0 4,5 * * *"]  (6 h 00 Europe/Paris, été comme hiver — filtré dans le job)

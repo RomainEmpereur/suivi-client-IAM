@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --port 8787",
-    "deploy": "wrangler deploy --env production",
+    "deploy": "cd .. && npm run build:worker && cd api && wrangler deploy --env production",
     "db:migrate:local": "wrangler d1 migrations apply espace-obsidian --local",
     "db:seed:local": "wrangler d1 execute espace-obsidian --local --file ../db/seed/.demo.sql"
   },

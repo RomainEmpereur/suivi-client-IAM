@@ -8,3 +8,4 @@ db/seed/.demo.sql
 .DS_Store
 .captures/
 *.bundle
+api/src/generated/

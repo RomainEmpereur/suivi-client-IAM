@@ -126,3 +126,23 @@ describe('Production', () => {
     expect((await call('/dev/users')).status).toBe(404);
   });
 });
+
+describe('Démo en ligne', () => {
+  const env = { ENVIRONMENT: 'demo', DEV_AUTH: '1', ACCESS_TEAM_DOMAIN: 'x.cloudflareaccess.com', ACCESS_AUD: 'aud' };
+
+  it("sans jeton Cloudflare Access, l'identité fictive est refusée", async () => {
+    const { call } = setup(env);
+    expect((await call(`/clients/${A}`, { as: AGENCE })).status).toBe(401);
+    expect((await call('/me', { as: CLIENT_A })).status).toBe(401);
+  });
+
+  it("la liste des identités n'est pas servie sans jeton Access", async () => {
+    const { call } = setup(env);
+    expect((await call('/dev/users')).status).toBe(404);
+  });
+
+  it('un jeton Access invalide est refusé', async () => {
+    const { call } = setup(env);
+    expect((await call('/me', { as: AGENCE, headers: { 'Cf-Access-Jwt-Assertion': 'faux.jeton.signe' } })).status).toBe(401);
+  });
+});

@@ -35,13 +35,20 @@ npm test          # 56 tests : isolation, brouillons, jetons, production, compte
 npm run typecheck
 ```
 
+## Démo en ligne
+`https://espace-obsidian-demo.obsidianpartners.workers.dev` — données fictives, protégée par Cloudflare Access.
+```bash
+npm run deploy:demo        # compile l'interface, l'intègre au Worker, déploie l'environnement demo
+```
+Variables pour wrangler : `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN` (jamais dans le dépôt).
+
 ## Déploiement (première fois)
 1. `npx wrangler d1 create espace-obsidian`, puis reporter l'identifiant dans `api/wrangler.toml` (deux blocs).
 2. `npx wrangler d1 migrations apply espace-obsidian --remote --env production` (depuis `api/`).
 3. Cloudflare Access → application auto-hébergée sur `espace.obsidianpartners.fr`. Méthode : code à usage unique par email.
    Durée de session : 30 jours. Politique : liste des emails invités. Reporter le domaine d'équipe et l'AUD dans `[env.production.vars]`.
-4. Front : projet Pages relié au dépôt, commande `npm run build`, dossier `web/dist`, domaine `espace.obsidianpartners.fr`.
-5. API : décommenter la route `espace.obsidianpartners.fr/api/*`, puis lancer `npm run deploy -w api`.
+4. Rattacher le domaine `obsidianpartners.fr` au compte Cloudflare, puis décommenter `routes` (custom_domain) dans `[env.production]`.
+5. `npm run deploy -w api` : compile l'interface, l'intègre au Worker et déploie (décision 0005).
 6. Créer le compte agence (et ensuite chaque client) :
    ```bash
    npx wrangler d1 execute espace-obsidian --remote --env production --command "INSERT INTO users (id, email, role) VALUES ('usr_romain', '<email>', 'agence')"

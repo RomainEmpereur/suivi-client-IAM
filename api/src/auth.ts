@@ -10,17 +10,10 @@ export function devAuthEnabled(env: Bindings): boolean {
   return env.ENVIRONMENT !== 'production' && env.DEV_AUTH === '1';
 }
 
-/**
- * Identité de la requête.
- * - Production : jeton signé Cloudflare Access (en-tête Cf-Access-Jwt-Assertion), vérifié
- *   (signature, émetteur, audience). Aucune confiance accordée à ce que le navigateur déclare.
- * - Développement / tests : en-tête X-Dev-User, accepté uniquement hors production.
- */
-async function resolveEmail(env: Bindings, header: (n: string) => string | undefined): Promise<string | null> {
-  if (devAuthEnabled(env)) {
-    const dev = header('X-Dev-User');
-    if (dev) return dev.trim().toLowerCase();
-  }
+const DEMO_IDENTITY = /^[^@\s]+@[a-z0-9.-]+\.demo\.local$/;
+
+/** Vérifie le jeton signé Cloudflare Access (signature, émetteur, audience). Renvoie l'email ou null. */
+export async function verifyAccess(env: Bindings, header: (n: string) => string | undefined): Promise<string | null> {
   const token = header('Cf-Access-Jwt-Assertion');
   if (!token) return null;
   if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) throw new HttpError(500, 'Authentification non configurée.');
@@ -36,6 +29,28 @@ async function resolveEmail(env: Bindings, header: (n: string) => string | undef
   } catch {
     return null;
   }
+}
+
+/**
+ * Identité de la requête.
+ * - Production : uniquement le jeton Cloudflare Access vérifié.
+ * - Démo en ligne : le jeton Access est OBLIGATOIRE ; ensuite seulement, une identité fictive *.demo.local
+ *   peut être choisie (X-Dev-User). La base de démo ne contient que des données fictives.
+ * - Développement / tests : en-tête X-Dev-User.
+ */
+async function resolveEmail(env: Bindings, header: (n: string) => string | undefined): Promise<string | null> {
+  if (env.ENVIRONMENT === 'demo') {
+    const accessEmail = await verifyAccess(env, header);
+    if (!accessEmail) return null;
+    const dev = header('X-Dev-User')?.trim().toLowerCase();
+    if (devAuthEnabled(env) && dev && DEMO_IDENTITY.test(dev)) return dev;
+    return accessEmail;
+  }
+  if (devAuthEnabled(env)) {
+    const dev = header('X-Dev-User');
+    if (dev) return dev.trim().toLowerCase();
+  }
+  return verifyAccess(env, header);
 }
 
 const LOGIN_TOUCH_MS = 12 * 3600 * 1000;

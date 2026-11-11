@@ -14,7 +14,9 @@
     "db:seed:local": "node --experimental-strip-types db/seed/generate.ts > db/seed/.demo.sql && npm run db:seed:local -w api",
     "build": "npm run build -w web",
     "typecheck": "tsc -p api && tsc -p web && tsc -p tests",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:worker": "npm run build -w web && node scripts/embed-web.mjs",
+    "deploy:demo": "npm run build:worker && cd api && wrangler deploy --env demo"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

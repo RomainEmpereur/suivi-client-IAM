@@ -22,7 +22,8 @@ export function App() {
   const [view, setViewState] = useState<'agence' | 'client'>(store.get('view') === 'client' ? 'client' : 'agence');
   const me = useApi<Me>('/me', [view]);
 
-  if (me.error instanceof ApiError && me.error.status === 401) return <DevLogin />;
+  // 401 : pas d'identité ; 403 : identité inconnue (ex. démo en ligne, avant le choix d'une identité fictive).
+  if (me.error instanceof ApiError && (me.error.status === 401 || me.error.status === 403)) return <DevLogin error={me.error} />;
   if (me.error) return <div class="login"><ErrorBox error={me.error} /><DevSwitch /></div>;
   if (!me.data) return <div class="login"><Loading /></div>;
 
@@ -145,17 +146,17 @@ function ClientScreen({ clientId, screen, search }: { clientId: string; screen: 
 }
 
 /** Sélecteur d'identité — développement uniquement (le serveur refuse X-Dev-User en production). */
-function DevLogin() {
+function DevLogin({ error }: { error: ApiError }) {
   const [users, setUsers] = useState<{ email: string; role: string }[] | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   useEffect(() => { api<{ users: { email: string; role: string }[] }>('/dev/users').then((r) => setUsers(r.users)).catch(() => setUnavailable(true)); }, []);
   return (
     <div class="login">
       <div class="brand" style="font-size:24px;margin-bottom:12px">Obsidian <em>Partners</em></div>
-      {unavailable && <p class="muted">Connexion requise. Rechargez la page pour recevoir un code par email.</p>}
+      {unavailable && <p class="muted">{error.status === 401 ? 'Connexion requise. Rechargez la page pour recevoir un code par email.' : error.message}</p>}
       {users && (
         <div class="card">
-          <div class="label" style="margin-bottom:10px">Développement · choisir une identité</div>
+          <div class="label" style="margin-bottom:10px">Démonstration · choisir une identité fictive</div>
           {users.map((u) => (
             <button class="ghost-btn" style="display:block;width:100%;margin-bottom:6px" onClick={() => { store.set('devUser', u.email); location.href = '/'; }}>
               {u.email} <span class="mono small">· {u.role}</span>

@@ -1,7 +1,7 @@
 export interface Bindings {
   DB: D1Database;
-  ENVIRONMENT: 'development' | 'test' | 'production';
-  /** « 1 » autorise l'en-tête X-Dev-User. Ignoré (refusé) en production. */
+  ENVIRONMENT: 'development' | 'test' | 'demo' | 'production';
+  /** « 1 » autorise l'en-tête X-Dev-User. Refusé en production ; en démo, seulement derrière Access et pour une identité *.demo.local. */
   DEV_AUTH?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
