@@ -58,4 +58,6 @@ database_name = "espace-obsidian"
 database_id = "f6ed1704-2286-4e12-868b-c1c2cf79b4e0"
 migrations_dir = "../db/migrations"
 
-# Lot 3 : [triggers] crons = ["0 4,5 * * *"]  (6 h 00 Europe/Paris, été comme hiver — filtré dans le job)
+# Synchronisation quotidienne (§13) : 4 h et 5 h UTC ; le Worker ne travaille que s'il est 6 h à Paris (été comme hiver).
+[env.production.triggers]
+crons = ["0 4 * * *", "0 5 * * *"]

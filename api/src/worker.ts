@@ -5,6 +5,7 @@
 import app from './index.ts';
 import { WEB_ASSETS } from './generated/web-assets.ts';
 import type { Bindings } from './env.ts';
+import { runDaily } from '../../jobs/sync-daily/src/run.ts';
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -31,5 +32,14 @@ export default {
         'cache-control': isBuildAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
       },
     });
+  },
+
+  /**
+   * Cron (§13) : déclenché à 4 h et 5 h UTC ; ne s'exécute que lorsqu'il est 6 h à Paris (heure d'été comme d'hiver).
+   */
+  async scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext) {
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+    if (hour !== 6) return;
+    ctx.waitUntil(runDaily(env).then((r) => console.log('Synchronisation quotidienne', JSON.stringify(Object.values(r).map((x) => (x === 'ok' ? 'ok' : 'échec'))))));
   },
 };

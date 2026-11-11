@@ -8,6 +8,7 @@ Lire `docs/cahier-des-charges.md` (il fait foi) et `docs/decisions/` avant toute
 - Production : `https://espace-obsidian.obsidianpartners.workers.dev` (env `production`, base `espace-obsidian`, données réelles, Access réservé à l'agence). Déployer : `npm run deploy:production` — **toujours avec l'accord explicite de Romain**. Client réel chargé : « Obsidian Partners (I.A.M) », import ponctuel MCP du 11 nov. (décision 0006).
 - Lots livrés : **0** (décision), **1** (socle : schéma, auth, rôles, bascule de vue, coquille des écrans sur données de démo).
 - Gestion des rendez-vous livrée (décision 0006) : l'agence pose les statuts dans l'espace ; **un statut posé par l'agence n'est jamais écrasé** par un import ou une synchronisation.
+- Lot 3, partie GHL construite (décision 0007) : client lecture seule `packages/ghl`, synchro `jobs/sync-daily`, jetons chiffrés (secret `TOKEN_ENCRYPTION_KEY`), cron 6 h Paris. Meta à brancher.
 - Lot 2 en cours : formulaire d'onboarding livré (décision 0004). Restent les ressources (R2), l'édition agence des livrables et tâches, les commentaires sur livrable.
 - Le formulaire se définit **uniquement** dans `packages/domain/src/onboarding.ts` ; les clés de question sont stables (jamais renommées).
 - Défauts §20 appliqués : décision 0003.

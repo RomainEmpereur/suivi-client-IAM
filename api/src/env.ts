@@ -5,6 +5,8 @@ export interface Bindings {
   DEV_AUTH?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  /** Secret Worker : 32 octets base64, chiffrement des jetons (§16). */
+  TOKEN_ENCRYPTION_KEY?: string;
 }
 
 export interface UserRow {
@@ -35,6 +37,7 @@ export interface ClientRow {
   onboarding_locked: number;
   onboarding_submitted_at?: string | null;
   unmeasured_json?: string;
+  ghl_config_json?: string;
   is_demo: number;
 }
 

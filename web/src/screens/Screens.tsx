@@ -136,7 +136,7 @@ const CONN_STATE: Record<string, { label: string; kind: string }> = {
 
 export function ConnectionsScreen({ clientId }: { clientId: string }) {
   const { data, error } = useApi<{ connections: { id: string; type: string; state: string; lastCheckedAt: string | null; clientAction: string | null; guideId: string | null; errorMessage?: string | null; tokenExpiresAt?: string | null; tokenConfigured?: boolean }[] }>(`/clients/${clientId}/connections`);
-  const { view } = useSession();
+  const { view, me } = useSession();
   const lastSync = useLastSync(clientId);
   const order = ['meta', 'pixel', 'ghl', 'calendrier', 'domaine', 'mailing', 'formulaire'];
   return (
@@ -166,8 +166,53 @@ export function ConnectionsScreen({ clientId }: { clientId: string }) {
           })}
         </div>
       )}
-      <AgencyNote>le test manuel et la saisie des jetons arrivent au lot 3 ; les jetons ne sont jamais renvoyés au navigateur.</AgencyNote>
+      {view === 'agence' && me.user.role === 'agence' && <AgencyConnectionTools clientId={clientId} />}
     </>
+  );
+}
+
+/** Vue agence : saisie des jetons (chiffrés, jamais réaffichés) et synchronisation manuelle (§13, §16). */
+function AgencyConnectionTools({ clientId }: { clientId: string }) {
+  const [type, setType] = useState<'ghl' | 'meta'>('ghl');
+  const [token, setToken] = useState('');
+  const [externalId, setExternalId] = useState('');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function save(e: Event) {
+    e.preventDefault(); setBusy(true); setMsg(null);
+    try {
+      const r = await api<{ state: string; error: string | null }>(`/clients/${clientId}/connections/${type}/token`, { method: 'PUT', body: JSON.stringify({ token, externalId }) });
+      setToken('');
+      setMsg(r.state === 'ok' ? { ok: true, text: 'Jeton enregistré (chiffré) et connexion testée.' } : { ok: false, text: `Jeton enregistré, mais le test a échoué : ${r.error}` });
+    } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); }
+  }
+  async function sync() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api<{ result: { opportunities: number; appointments: number } }>(`/clients/${clientId}/sync`, { method: 'POST', body: '{}' });
+      setMsg({ ok: true, text: `Synchronisation GHL terminée : ${r.result.opportunities} opportunités, ${r.result.appointments} rendez-vous lus.` });
+    } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); }
+  }
+  return (
+    <div class="section card" style="border-color:var(--agency);display:flex;flex-direction:column;gap:10px">
+      <span class="label" style="color:var(--agency)">Vue agence · jetons et synchronisation</span>
+      <form class="date-range" onSubmit={save}>
+        <select class="client-select" style="width:auto" value={type} onChange={(e) => setType((e.target as HTMLSelectElement).value as 'ghl' | 'meta')} aria-label="Connexion">
+          <option value="ghl">GoHighLevel</option>
+          <option value="meta">Meta</option>
+        </select>
+        <input type="text" placeholder={type === 'ghl' ? 'Identifiant du sous-compte (location)' : 'act_… (compte publicitaire)'} value={externalId}
+          onInput={(e) => setExternalId((e.target as HTMLInputElement).value)} aria-label="Identifiant externe" required />
+        <input type="password" autocomplete="off" placeholder="Jeton (jamais réaffiché)" value={token}
+          onInput={(e) => setToken((e.target as HTMLInputElement).value)} aria-label="Jeton" required style="background:var(--surface-2);border:1px solid var(--border);border-radius:7px;padding:5px 8px" />
+        <button class="btn" type="submit" disabled={busy}>Enregistrer et tester</button>
+      </form>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="ghost-btn" onClick={sync} disabled={busy}>Synchroniser GHL maintenant (30 derniers jours)</button>
+        <span class="small muted">Synchronisation automatique chaque jour à 6 h (Paris).</span>
+      </div>
+      {msg && <div class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }} role="status">{msg.text}</div>}
+    </div>
   );
 }
 

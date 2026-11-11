@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "types": ["node", "@cloudflare/workers-types"] },
-  "include": [".", "../api/src", "../packages/domain/src", "../db/seed"]
+  "include": [".", "../api/src", "../packages/domain/src", "../packages/ghl/src", "../jobs/sync-daily/src", "../db/seed"]
 }

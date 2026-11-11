@@ -1,6 +1,6 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "types": ["@cloudflare/workers-types"] },
-  "include": ["src", "../packages/domain/src"],
+  "include": ["src", "../packages/domain/src", "../packages/ghl/src", "../jobs/sync-daily/src"],
   "exclude": ["src/worker.ts", "src/generated"]
 }

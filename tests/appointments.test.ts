@@ -56,3 +56,18 @@ describe('Compteur contractuel', () => {
     expect(c.validated).toBe(0);
   });
 });
+
+import { ghlAppointmentStatus } from '../packages/domain/src/index.ts';
+
+describe('Statut importé depuis GHL (décision 0006)', () => {
+  const config = { postCallStageIds: ['post'], noShowStageIds: ['ns'] };
+  const now = Date.parse('2026-11-11T12:00:00Z');
+  const base = { scheduledAt: '2026-11-01T10:00:00Z', isLastPastForContact: true, contactStageIds: [] as string[], config, now };
+  it('annulé prime sur tout', () => expect(ghlAppointmentStatus({ ...base, ghlStatus: 'cancelled', contactStageIds: ['post'] })).toBe('annule'));
+  it('étape après appel → honoré, et prime sur no-show', () => expect(ghlAppointmentStatus({ ...base, ghlStatus: 'confirmed', contactStageIds: ['ns', 'post'] })).toBe('honore'));
+  it('étape no-show → absent', () => expect(ghlAppointmentStatus({ ...base, ghlStatus: 'confirmed', contactStageIds: ['ns'] })).toBe('absent'));
+  it("l'étape ne qualifie que le dernier rendez-vous du contact", () =>
+    expect(ghlAppointmentStatus({ ...base, ghlStatus: 'confirmed', isLastPastForContact: false, contactStageIds: ['post'] })).toBe('prevu'));
+  it('un rendez-vous futur reste prévu', () =>
+    expect(ghlAppointmentStatus({ ...base, ghlStatus: 'showed', scheduledAt: '2026-11-20T10:00:00Z' })).toBe('prevu'));
+});
