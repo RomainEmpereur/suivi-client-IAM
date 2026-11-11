@@ -7,3 +7,4 @@ db/seed/.demo.sql
 *.log
 .DS_Store
 .captures/
+*.bundle
