@@ -1,4 +1,5 @@
 import { ConsoleAlerts } from '../components/Alerts.tsx';
+import { DeliverableEditor } from '../components/DeliverableTools.tsx';
 import { useRef, useState } from 'preact/hooks';
 import {
   DELIVERABLE_STATUS_LABEL, DELIVERABLE_TYPE_LABEL, PHASE_STATE_LABEL, formatDate, formatDateTime, formatEuros, formatInt,
@@ -18,7 +19,7 @@ export const useLastSync = (clientId: string) => { const d = useApi<ClientOvervi
 
 interface Infra {
   phases: { key: string; label: string; state: PhaseState; startedAt: string | null; blocker: string | null }[];
-  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; hasContent?: boolean; clientSummary?: string | null; published: boolean; publishedAt?: string | null }[];
+  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; hasContent?: boolean; clientSummary?: string | null; published: boolean; publishedAt?: string | null; comments?: number; clientComments?: number }[];
   tasks: Record<'agence' | 'client', Task[]>;
 }
 interface Task { id: string; label: string; description: string | null; phase: string | null; status: string; dueDate: string | null; guideId: string | null; overdue: boolean; blocking: boolean }
@@ -31,6 +32,7 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
   const canTick = (owner: 'agence' | 'client') => (me.user.role === 'client' && owner === 'client') || (me.user.role === 'agence' && view === 'agence');
   const editable = me.user.role === 'agence' && view === 'agence';
   const [editPhase, setEditPhase] = useState<string | null>(null);
+  const [editDeliverable, setEditDeliverable] = useState<string | null>(null);
   const phaseLabel = (k: string | null) => data?.phases.find((x) => x.key === k)?.label ?? null;
 
   async function toggle(t: Task) {
@@ -83,7 +85,11 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
 
           <div class="section" style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px" data-stack>
             <div>
-              <SectionTitle a="Les" b="livrables" />
+              <SectionTitle a="Les" b="livrables" right={editable && editDeliverable !== 'nouveau' ? <button class="ghost-btn small" onClick={() => setEditDeliverable('nouveau')}>+ Ajouter un livrable</button> : undefined} />
+              {editable && editDeliverable === 'nouveau' && (
+                <div class="card" style="margin-bottom:12px"><span class="label">Nouveau livrable</span>
+                  <DeliverableEditor clientId={clientId} onDone={() => { setEditDeliverable(null); reload(); }} /></div>
+              )}
               {data.deliverables.length === 0 && <EmptyState title="Aucun livrable pour le moment">Ils apparaissent ici au fil de la production.</EmptyState>}
               <div class="grid grid-2 stack">
                 {data.deliverables.map((d) => (
@@ -100,6 +106,14 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
                       : d.externalUrl && d.status !== 'en_preparation'
                       ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">{/^https:\/\/(drive|docs)\.google\.com\//.test(d.externalUrl) ? 'Ouvrir dans Drive ↗' : 'Ouvrir le livrable ↗'}</a>
                       : <button class="btn" disabled>Contenu disponible à la publication</button>}
+                    {d.status !== 'en_preparation' && (d.published || editable) && (
+                      <a class="small" href={`/c/${clientId}/livrables/${d.id}#commentaires`}>
+                        {d.comments ? `${d.comments} commentaire${d.comments > 1 ? 's' : ''}${editable && d.clientComments ? ` · ${d.clientComments} du client` : ''}` : 'Commenter ce livrable'} →
+                      </a>
+                    )}
+                    {editable && (editDeliverable === d.id
+                      ? <DeliverableEditor clientId={clientId} deliverable={d} onDone={() => { setEditDeliverable(null); reload(); }} />
+                      : <button class="ghost-btn small" style="align-self:flex-start" onClick={() => setEditDeliverable(d.id)}>Modifier</button>)}
                     {view === 'agence' && me.user.role === 'agence' && !d.published && (
                       <>
                         <button class="ghost-btn" onClick={() => publish(d.id)}>Publier pour le client…</button>

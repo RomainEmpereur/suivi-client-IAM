@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { DEFAULT_THRESHOLDS, computeAppointmentCounter, safeDiv, type AppointmentLike } from '@obsidian/domain';
+import { CHAIN_STEPS, DEFAULT_THRESHOLDS, computeAppointmentCounter, deliveryGate, safeDiv, type AppointmentLike } from '@obsidian/domain';
 import type { AppEnv, ClientRow } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { all, audit, first, newId, nowIso } from '../db.ts';
@@ -238,7 +238,7 @@ function editableClient(cl: ClientRow) {
   try { thresholds = JSON.parse(cl.thresholds_json || '{}'); } catch { thresholds = {}; }
   return {
     id: cl.id, name: cl.name, slug: cl.slug, status: cl.status, offer: cl.offer, startDate: cl.start_date,
-    campaignsLaunchedAt: cl.campaigns_launched_at, driveFolderUrl: cl.drive_folder_url ?? null,
+    campaignsLaunchedAt: cl.campaigns_launched_at, driveFolderUrl: cl.drive_folder_url ?? null, masterTrackerUrl: cl.master_tracker_url ?? null,
     adAccountCurrency: cl.ad_account_currency, adAccountTimezone: cl.ad_account_timezone,
     autoPublishRecos: Boolean(cl.auto_publish_recos), isDemo: Boolean(cl.is_demo),
     thresholds, defaultThresholds: DEFAULT_THRESHOLDS,
@@ -273,6 +273,12 @@ function parseClientFields(body: Record<string, unknown>) {
     if (v == null || v === '') out.drive_folder_url = null;
     else if (typeof v !== 'string' || !/^https:\/\/[^\s]+$/.test(v.trim()) || v.length > 500) throw new HttpError(400, 'Lien du dossier invalide (https).');
     else out.drive_folder_url = v.trim();
+  }
+  if ('masterTrackerUrl' in body) {
+    const v = body.masterTrackerUrl;
+    if (v == null || v === '') out.master_tracker_url = null;
+    else if (typeof v !== 'string' || !/^https:\/\/[^\s]+$/.test(v.trim()) || v.length > 500) throw new HttpError(400, 'Lien du master tracker invalide (https).');
+    else out.master_tracker_url = v.trim();
   }
   if ('adAccountCurrency' in body) {
     if (typeof body.adAccountCurrency !== 'string' || !/^[A-Z]{3}$/.test(body.adAccountCurrency)) throw new HttpError(400, 'Devise invalide (ex. EUR).');
@@ -353,4 +359,52 @@ agency.patch('/clients/:id', async (c) => {
 agency.get('/clients/:id/alerts', async (c) => {
   const alerts = await latestAlerts(c.env.DB, [c.req.param('id')]);
   return c.json({ alerts });
+});
+
+// ─── Parcours nouveau client (décision 0020) ────────────────────────────────────
+
+/** Liste de contrôle de la fiche client : ce qui est fait, ce qui reste, et où le faire. Calculée, jamais saisie. */
+agency.get('/clients/:id/parcours', async (c) => {
+  const db = c.env.DB;
+  const cl = await first<ClientRow & { onboarding_submitted_at: string | null }>(db, 'SELECT * FROM clients WHERE id = ?1', c.req.param('id'));
+  if (!cl || (c.env.ENVIRONMENT === 'production' && cl.is_demo)) throw notFound();
+  const [users, answers, assets, steps, conns, published] = await Promise.all([
+    all<{ email: string; last_login_at: string | null }>(db, 'SELECT email, last_login_at FROM users WHERE client_id = ?1 ORDER BY email', cl.id),
+    all<{ question_key: string; answer: string | null }>(db, 'SELECT question_key, answer FROM onboarding_answers WHERE client_id = ?1', cl.id),
+    first<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM onboarding_assets WHERE client_id = ?1', cl.id),
+    all<{ step: string; status: string; content_md: string | null; result_url: string | null; queued_at: string | null }>(db,
+      'SELECT step, status, content_md, result_url, queued_at FROM delivery_steps WHERE client_id = ?1', cl.id),
+    all<{ type: string; state: string }>(db, 'SELECT type, state FROM connections WHERE client_id = ?1', cl.id),
+    first<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM deliverables WHERE client_id = ?1 AND visible_client = 1', cl.id),
+  ]);
+  const gate = deliveryGate(cl.onboarding_submitted_at ?? null, Object.fromEntries(answers.map((a) => [a.question_key, a.answer])));
+  const byStep = new Map(steps.map((s) => [s.step, s]));
+  const chain = CHAIN_STEPS.filter((k) => k !== 's9');
+  const written = chain.filter((k) => byStep.get(k)?.content_md?.trim() || byStep.get(k)?.result_url).length;
+  const validated = chain.filter((k) => byStep.get(k)?.status === 'valide').length;
+  const queued = steps.filter((s) => s.queued_at).length;
+  const conn = (t: string) => conns.find((x) => x.type === t)?.state ?? null;
+  const base = `/c/${cl.id}`;
+  const STATE: Record<string, string> = { ok: 'opérationnelle', degrade: 'dégradée', casse: 'en erreur', non_configure: 'non configurée' };
+  const items = [
+    { key: 'fiche', label: 'Fiche client créée', done: true, detail: `Statut : ${cl.status}`, href: `/agence/clients/${cl.id}` },
+    { key: 'drive', label: 'Dossier Drive renseigné', done: Boolean(cl.drive_folder_url), detail: cl.drive_folder_url ? 'Lien enregistré dans la fiche' : 'Collez le lien du dossier dans la fiche (créé par la tâche planifiée ou à la main)', href: `/agence/clients/${cl.id}` },
+    { key: 'tracker', label: 'Master tracker créé', done: Boolean(cl.master_tracker_url), detail: cl.master_tracker_url ? 'Lien enregistré dans la fiche' : 'Collez le lien du Google Sheet « Client - Master tracker » dans la fiche', href: `/agence/clients/${cl.id}` },
+    { key: 'acces', label: 'Accès client donné', done: users.length > 0,
+      detail: users.length ? users.map((u) => `${u.email}${u.last_login_at ? ' (connecté)' : ' (jamais connecté)'}`).join(', ') : 'Ajout manuel : compte dans la base et email dans Cloudflare Access', href: null },
+    { key: 'onboarding', label: 'Onboarding envoyé par le client', done: Boolean(cl.onboarding_submitted_at),
+      detail: cl.onboarding_submitted_at ? (gate.ok ? 'Infos de base complètes' : `Manque : ${gate.missing.join(' · ')}`) : `${answers.filter((a) => a.answer?.trim()).length} réponses enregistrées, pas encore envoyé`, href: `${base}/onboarding` },
+    { key: 'ressources', label: 'Ressources reçues (logo, captures, témoignages)', done: (assets?.n ?? 0) > 0, optional: true,
+      detail: (assets?.n ?? 0) > 0 ? `${assets!.n} ressource${assets!.n > 1 ? 's' : ''} dans l'espace` : 'Aucune dans l\'espace (elles peuvent être dans le Drive)', href: `${base}/onboarding` },
+    { key: 'delivery', label: 'Delivery rédigé', done: written === chain.length,
+      detail: `${written}/${chain.length} étapes rédigées${queued ? ` · ${queued} en file` : ''}${!gate.ok ? ' · lancement bloqué tant que l\'onboarding est incomplet' : ''}`, href: `${base}/delivery` },
+    { key: 'validation', label: 'Delivery validé par l\'agence', done: validated === chain.length, detail: `${validated}/${chain.length} étapes validées`, href: `${base}/delivery` },
+    { key: 'meta', label: 'Connexion Meta opérationnelle', done: conn('meta') === 'ok', detail: conn('meta') ? `Connexion ${STATE[conn('meta')!] ?? conn('meta')}` : 'Jeton et compte publicitaire à saisir', href: `${base}/connexions` },
+    { key: 'ghl', label: 'Connexion GoHighLevel opérationnelle', done: conn('ghl') === 'ok', detail: conn('ghl') ? `Connexion ${STATE[conn('ghl')!] ?? conn('ghl')}` : 'Jeton et sous-compte à saisir', href: `${base}/connexions` },
+    { key: 'tracking', label: 'Tracking et connexions vérifiés (étape 9)', done: byStep.get('s9')?.status === 'valide', detail: byStep.get('s9')?.status === 'valide' ? 'Étape 9 validée' : 'Pixel, champs GHL et vérification à valider', href: `${base}/delivery` },
+    { key: 'livrables', label: 'Livrables publiés pour le client', done: (published?.n ?? 0) > 0, detail: `${published?.n ?? 0} livrable${(published?.n ?? 0) > 1 ? 's' : ''} visible${(published?.n ?? 0) > 1 ? 's' : ''}`, href: `${base}/infrastructure` },
+    { key: 'lancement', label: 'Campagnes lancées', done: Boolean(cl.campaigns_launched_at), detail: cl.campaigns_launched_at ? `Depuis le ${cl.campaigns_launched_at}` : 'Date de lancement à saisir dans la fiche', href: `/agence/clients/${cl.id}` },
+  ];
+  const required = items.filter((i) => !('optional' in i && i.optional));
+  return c.json({ items, done: required.filter((i) => i.done).length, total: required.length, next: required.find((i) => !i.done)?.key ?? null });
 });

@@ -101,11 +101,14 @@ clients.get('/:clientId/infrastructure', async (c) => {
   const client = c.get('client');
   const view = c.get('view');
   const db = c.env.DB;
-  const [phaseRows, deliverables, tasks] = await Promise.all([
+  const [phaseRows, deliverables, tasks, commentCounts] = await Promise.all([
     all<{ phase: string; state: string; started_at: string | null; blocker: string | null }>(db, 'SELECT phase, state, started_at, blocker FROM phases WHERE client_id = ?1', client.id),
     all<DeliverableRow>(db, 'SELECT * FROM deliverables WHERE client_id = ?1 ORDER BY created_at', client.id),
     all<TaskRow>(db, 'SELECT * FROM tasks WHERE client_id = ?1 ORDER BY (status = \'fait\'), due_date IS NULL, due_date, created_at', client.id),
+    all<{ deliverable_id: string; n: number; from_client: number }>(db,
+      `SELECT deliverable_id, COUNT(*) AS n, SUM(author_role = 'client') AS from_client FROM deliverable_comments WHERE client_id = ?1 GROUP BY deliverable_id`, client.id),
   ]);
+  const comments = new Map(commentCounts.map((r) => [r.deliverable_id, r]));
   const byKey = new Map(phaseRows.map((r) => [r.phase, r]));
   const today = todayParis();
   return c.json({
@@ -113,7 +116,11 @@ clients.get('/:clientId/infrastructure', async (c) => {
       const r = byKey.get(p.key);
       return { key: p.key, label: p.label, state: r?.state ?? 'a_venir', startedAt: r?.started_at ?? null, blocker: r?.blocker ?? null };
     }),
-    deliverables: deliverables.map((d) => serializeDeliverable(d, view)),
+    deliverables: deliverables.map((d) => {
+      const out = serializeDeliverable(d, view);
+      const n = comments.get(d.id);
+      return out.published || view === 'agence' ? { ...out, comments: n?.n ?? 0, clientComments: n?.from_client ?? 0 } : out;
+    }),
     tasks: {
       agence: tasks.filter((t) => t.owner === 'agence').map((t) => serializeTask(t, today)),
       client: tasks.filter((t) => t.owner === 'client').map((t) => serializeTask(t, today)),
@@ -269,6 +276,163 @@ clients.post('/:clientId/deliverables/:deliverableId/publish', async (c) => {
     clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'publication_livrable', objectType: 'deliverable', objectId: d.id,
     before: { status: d.status, visible_client: d.visible_client }, after: { status, visible_client: 1 },
   });
+  return c.json({ ok: true });
+});
+
+// ─── Livrables : édition agence et commentaires (décision 0020) ─────────────────
+
+const PHASE_OF_TYPE: Record<string, string> = {
+  offre: 'offre', landing: 'landing', vsl_script: 'vsl', vsl_video: 'vsl', ads_scripts: 'ads', ads_videos: 'ads',
+  sequences: 'sequences', tracking: 'recette', campagne: 'lancement',
+};
+const EDIT_STATUSES = ['brouillon', 'en_preparation', 'a_relire', 'valide', 'mis_a_jour'];
+const isHttpsUrl = (v: string) => { try { return new URL(v).protocol === 'https:'; } catch { return false; } };
+
+function readDeliverableFields(body: Record<string, unknown>, partial: boolean) {
+  const out: Record<string, unknown> = {};
+  if (!partial || 'type' in body) {
+    if (typeof body.type !== 'string' || !PHASE_OF_TYPE[body.type]) throw new HttpError(400, 'Type de livrable inconnu.');
+    out.type = body.type; out.phase = PHASE_OF_TYPE[body.type];
+  }
+  if (!partial || 'title' in body) {
+    const v = typeof body.title === 'string' ? body.title.trim() : '';
+    if (!v || v.length > 160) throw new HttpError(400, 'Titre requis (160 caractères au plus).');
+    out.title = v;
+  }
+  if ('clientSummary' in body) {
+    if (body.clientSummary != null && typeof body.clientSummary !== 'string') throw new HttpError(400, 'Résumé invalide.');
+    out.client_summary = (body.clientSummary as string | null)?.trim().slice(0, 400) || null;
+  }
+  if ('externalUrl' in body) {
+    const v = typeof body.externalUrl === 'string' ? body.externalUrl.trim() : '';
+    if (v && (!isHttpsUrl(v) || v.length > 600)) throw new HttpError(400, 'Le lien doit être une adresse https.');
+    out.external_url = v || null;
+  }
+  if ('contentMd' in body) {
+    if (body.contentMd != null && typeof body.contentMd !== 'string') throw new HttpError(400, 'Contenu invalide.');
+    const v = (body.contentMd as string | null)?.replace(/\r\n/g, '\n') ?? '';
+    if (v.length > 400_000) throw new HttpError(400, 'Contenu trop long.');
+    out.content_md = v.trim() ? v : null;
+  }
+  if ('status' in body) {
+    if (!EDIT_STATUSES.includes(body.status as string)) throw new HttpError(400, 'Statut invalide.');
+    out.status = body.status;
+  }
+  if ('visible' in body) out.visible_client = body.visible ? 1 : 0;
+  return out;
+}
+
+/** L'agence ajoute un livrable (lien Drive, document) : brouillon par défaut, publié si « visible ». */
+clients.post('/:clientId/deliverables', async (c) => {
+  requireAgency(c);
+  const client = c.get('client');
+  const user = c.get('user');
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Corps de requête invalide.');
+  const f = readDeliverableFields(body, false);
+  if (!f.external_url && !f.content_md) throw new HttpError(400, 'Un lien ou un contenu est requis.');
+  const visible = f.visible_client === 1;
+  const status = (f.status as string | undefined) ?? (visible ? 'valide' : 'brouillon');
+  if (visible && status === 'brouillon') throw new HttpError(400, 'Un livrable visible ne peut pas rester en brouillon.');
+  const id = newId('dlv');
+  const now = nowIso();
+  await run(c.env.DB, `INSERT INTO deliverables (id, client_id, type, phase, title, status, version, external_url, client_summary, content_md, visible_client, published_at, origin)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9, ?10, ?11, 'manuel')`,
+    id, client.id, f.type, f.phase, f.title, status, f.external_url ?? null, f.client_summary ?? null, f.content_md ?? null, visible ? 1 : 0, visible ? now : null);
+  await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'livrable_creation', objectType: 'deliverable', objectId: id, after: { type: f.type, title: f.title, status, visible } });
+  return c.json({ ok: true, id }, 201);
+});
+
+/** Modification par l'agence. Un livrable déjà publié dont le lien ou le contenu change passe en version suivante, « mis à jour ». */
+clients.patch('/:clientId/deliverables/:deliverableId', async (c) => {
+  requireAgency(c);
+  const client = c.get('client');
+  const user = c.get('user');
+  const d = await first<DeliverableRow>(c.env.DB, 'SELECT * FROM deliverables WHERE id = ?1 AND client_id = ?2', c.req.param('deliverableId'), client.id);
+  if (!d) throw notFound();
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Corps de requête invalide.');
+  const f = readDeliverableFields(body, true);
+  const changed = Object.keys(f).filter((k) => (d as unknown as Record<string, unknown>)[k] !== f[k]);
+  if (!changed.length) return c.json({ ok: true, changed: [] });
+  const visibleAfter = 'visible_client' in f ? f.visible_client === 1 : Boolean(d.visible_client);
+  const statusAfter = (f.status as string | undefined) ?? d.status;
+  if (visibleAfter && statusAfter === 'brouillon') throw new HttpError(400, 'Un livrable visible ne peut pas rester en brouillon.');
+  const contentChanged = changed.includes('content_md') || changed.includes('external_url');
+  if (d.visible_client && contentChanged) {
+    f.version = d.version + 1;
+    if (!('status' in f)) f.status = 'mis_a_jour';
+  }
+  if (visibleAfter && !d.visible_client) f.published_at = nowIso();
+  const cols = Object.keys(f);
+  const now = nowIso();
+  await run(c.env.DB, `UPDATE deliverables SET ${cols.map((k, i) => `${k} = ?${i + 1}`).join(', ')}, updated_at = ?${cols.length + 1} WHERE id = ?${cols.length + 2} AND client_id = ?${cols.length + 3}`,
+    ...cols.map((k) => f[k]), now, d.id, client.id);
+  await audit(c.env.DB, {
+    clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'livrable_modification', objectType: 'deliverable', objectId: d.id,
+    before: Object.fromEntries(changed.filter((k) => k !== 'content_md').map((k) => [k, (d as unknown as Record<string, unknown>)[k]])),
+    after: Object.fromEntries(cols.filter((k) => k !== 'content_md').map((k) => [k, f[k]])),
+  });
+  return c.json({ ok: true, changed: cols });
+});
+
+clients.delete('/:clientId/deliverables/:deliverableId', async (c) => {
+  requireAgency(c);
+  const client = c.get('client');
+  const user = c.get('user');
+  const d = await first<DeliverableRow>(c.env.DB, 'SELECT * FROM deliverables WHERE id = ?1 AND client_id = ?2', c.req.param('deliverableId'), client.id);
+  if (!d) throw notFound();
+  await run(c.env.DB, 'DELETE FROM deliverables WHERE id = ?1 AND client_id = ?2', d.id, client.id);
+  await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'livrable_suppression', objectType: 'deliverable', objectId: d.id, before: { type: d.type, title: d.title, status: d.status } });
+  return c.json({ ok: true });
+});
+
+/** Le client commente un livrable publié ; l'agence lit et répond (vue agence). */
+async function commentableDeliverable(c: { env: { DB: D1Database }; req: { param: (k: string) => string }; get: (k: 'client' | 'view') => unknown }) {
+  const client = c.get('client') as { id: string };
+  const d = await first<DeliverableRow>(c.env.DB, 'SELECT * FROM deliverables WHERE id = ?1 AND client_id = ?2', c.req.param('deliverableId'), client.id);
+  if (!d) throw notFound();
+  if (c.get('view') === 'client' && !(d.visible_client && d.status !== 'brouillon' && d.status !== 'en_preparation')) throw notFound();
+  return d;
+}
+
+clients.get('/:clientId/deliverables/:deliverableId/comments', async (c) => {
+  const d = await commentableDeliverable(c);
+  const rows = await all<{ id: string; body: string; created_at: string; author_role: string; author_user_id: string | null; display_name: string | null; email: string | null }>(c.env.DB,
+    `SELECT k.id, k.body, k.created_at, k.author_role, k.author_user_id, u.display_name, u.email FROM deliverable_comments k
+     LEFT JOIN users u ON u.id = k.author_user_id WHERE k.deliverable_id = ?1 AND k.client_id = ?2 ORDER BY k.created_at`, d.id, (c.get('client') as { id: string }).id);
+  const me = c.get('user');
+  return c.json({ comments: rows.map((r) => ({
+    id: r.id, body: r.body, createdAt: r.created_at, authorRole: r.author_role,
+    author: r.author_role === 'agence' ? 'Obsidian Partners' : r.display_name || r.email?.split('@')[0] || 'Client',
+    mine: r.author_user_id === me.id,
+  })) });
+});
+
+clients.post('/:clientId/deliverables/:deliverableId/comments', async (c) => {
+  const user = c.get('user');
+  if (user.role === 'agence') requireAgency(c);
+  const d = await commentableDeliverable(c);
+  const client = c.get('client');
+  const body = await c.req.json<{ body?: string }>().catch(() => ({} as { body?: string }));
+  const text = (body.body ?? '').trim();
+  if (!text) throw new HttpError(400, 'Commentaire vide.');
+  if (text.length > 4000) throw new HttpError(400, 'Commentaire trop long (4 000 caractères au plus).');
+  const id = newId('cmt');
+  await run(c.env.DB, 'INSERT INTO deliverable_comments (id, client_id, deliverable_id, author_user_id, author_role, body) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+    id, client.id, d.id, user.id, user.role === 'agence' ? 'agence' : 'client', text);
+  await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'livrable_commentaire', objectType: 'deliverable', objectId: d.id });
+  return c.json({ ok: true, id }, 201);
+});
+
+clients.delete('/:clientId/deliverables/:deliverableId/comments/:commentId', async (c) => {
+  const user = c.get('user');
+  if (user.role === 'agence') requireAgency(c);
+  const d = await commentableDeliverable(c);
+  const k = await first<{ id: string; author_user_id: string | null }>(c.env.DB, 'SELECT id, author_user_id FROM deliverable_comments WHERE id = ?1 AND deliverable_id = ?2', c.req.param('commentId'), d.id);
+  if (!k) throw notFound();
+  if (user.role === 'client' && k.author_user_id !== user.id) throw forbidden('Vous ne pouvez supprimer que vos propres commentaires.');
+  await run(c.env.DB, 'DELETE FROM deliverable_comments WHERE id = ?1', k.id);
   return c.json({ ok: true });
 });
 

@@ -5,7 +5,7 @@ import { ErrorBox, Loading, PageHead, SectionTitle } from '../components/ui.tsx'
 
 interface Editable {
   id: string; name: string; slug: string; status: string; offer: string | null; startDate: string | null;
-  campaignsLaunchedAt: string | null; driveFolderUrl: string | null; adAccountCurrency: string; adAccountTimezone: string;
+  campaignsLaunchedAt: string | null; driveFolderUrl: string | null; masterTrackerUrl: string | null; adAccountCurrency: string; adAccountTimezone: string;
   autoPublishRecos: boolean; isDemo: boolean;
   thresholds: Record<string, number>; defaultThresholds: Record<string, number | null>;
 }
@@ -48,11 +48,11 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
 
   useEffect(() => {
     const c = data?.client;
-    if (isNew) { setF({ name: '', status: 'onboarding', offer: '', startDate: '', campaignsLaunchedAt: '', driveFolderUrl: '', adAccountCurrency: 'EUR', adAccountTimezone: 'Europe/Paris', autoPublishRecos: true }); setTh({}); return; }
+    if (isNew) { setF({ name: '', status: 'onboarding', offer: '', startDate: '', campaignsLaunchedAt: '', driveFolderUrl: '', masterTrackerUrl: '', adAccountCurrency: 'EUR', adAccountTimezone: 'Europe/Paris', autoPublishRecos: true }); setTh({}); return; }
     if (!c) return;
     setF({
       name: c.name, status: c.status, offer: c.offer ?? '', startDate: c.startDate ?? '', campaignsLaunchedAt: c.campaignsLaunchedAt ?? '',
-      driveFolderUrl: c.driveFolderUrl ?? '', adAccountCurrency: c.adAccountCurrency, adAccountTimezone: c.adAccountTimezone, autoPublishRecos: c.autoPublishRecos,
+      driveFolderUrl: c.driveFolderUrl ?? '', masterTrackerUrl: c.masterTrackerUrl ?? '', adAccountCurrency: c.adAccountCurrency, adAccountTimezone: c.adAccountTimezone, autoPublishRecos: c.autoPublishRecos,
     });
     setTh(Object.fromEntries(THRESHOLDS.map((t) => [t.key, toDisplay(t.unit, c.thresholds[t.key])])));
   }, [data, isNew]);
@@ -87,6 +87,7 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
         right={!isNew && <a class="ghost-btn" href={`/c/${clientId}/tableau-de-bord`} onClick={(e) => { e.preventDefault(); navigate(`/c/${clientId}/tableau-de-bord`); }}>Ouvrir l'espace</a>} />
       {err && <div class="banner alert" role="alert">{err}</div>}
       {saved && <div class="banner" role="status">{saved}</div>}
+      {!isNew && <Parcours clientId={clientId!} key={saved ?? ''} />}
       <form onSubmit={save}>
         <div class="card section">
           <SectionTitle a="Le" b="client" />
@@ -102,6 +103,7 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
             <label class="field">Lancement des campagnes<input type="date" value={String(f.campaignsLaunchedAt ?? '')} onInput={set('campaignsLaunchedAt')} />
               <span class="hint">Masque le bandeau d'avancement côté client.</span></label>
             <label class="field">Dossier Drive<input type="url" placeholder="https://drive.google.com/…" value={String(f.driveFolderUrl ?? '')} onInput={set('driveFolderUrl')} /></label>
+            <label class="field">Master tracker<input type="url" placeholder="https://docs.google.com/spreadsheets/…" value={String(f.masterTrackerUrl ?? '')} onInput={set('masterTrackerUrl')} /></label>
             <label class="field">Devise du compte publicitaire<input maxLength={3} value={String(f.adAccountCurrency ?? 'EUR')} onInput={(e) => setF({ ...f, adAccountCurrency: (e.target as HTMLInputElement).value.toUpperCase() })} /></label>
             <label class="field">Fuseau du compte publicitaire<input value={String(f.adAccountTimezone ?? 'Europe/Paris')} onInput={set('adAccountTimezone')} /></label>
           </div>
@@ -129,5 +131,38 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
         </div>
       </form>
     </>
+  );
+}
+
+interface ParcoursItem { key: string; label: string; done: boolean; detail: string; href: string | null; optional?: boolean }
+
+/** Parcours nouveau client (décision 0020) : ce qui est fait, ce qui reste, et où le faire. */
+function Parcours({ clientId }: { clientId: string }) {
+  const { data, error } = useApi<{ items: ParcoursItem[]; done: number; total: number; next: string | null }>(`/agence/clients/${clientId}/parcours`);
+  if (error) return <ErrorBox error={error} />;
+  if (!data) return <Loading />;
+  const pct = Math.round((data.done / data.total) * 100);
+  return (
+    <div class="card section parcours">
+      <SectionTitle a="Parcours" b="du client" right={<span class="mono small" style="color:var(--text-2)">{data.done}/{data.total} étapes</span>} />
+      <div class="progress" aria-hidden="true" style="height:8px;margin-bottom:14px"><div style={{ width: `${pct}%` }} /></div>
+      <ol style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px">
+        {data.items.map((it, i) => {
+          const next = it.key === data.next;
+          return (
+            <li class={`parcours-item ${it.done ? 'done' : ''} ${next ? 'next' : ''}`}>
+              <span class="parcours-mark" aria-hidden="true">{it.done ? '✓' : String(i + 1).padStart(2, '0')}</span>
+              <span style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                <span>{it.label}{it.optional ? <span class="small muted"> · facultatif</span> : null}{next ? <span class="pill surveiller" style="margin-left:8px">Prochaine étape</span> : null}</span>
+                <span class="small muted" style="overflow-wrap:anywhere">{it.done ? 'Fait' : 'À faire'} · {it.detail}</span>
+              </span>
+              {it.href && !it.done && (
+                <a class="ghost-btn small" style="margin-left:auto;white-space:nowrap" href={it.href} onClick={(e) => { e.preventDefault(); navigate(it.href!); }}>Y aller →</a>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }

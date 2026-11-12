@@ -3,6 +3,7 @@ import { useApi } from '../api.ts';
 import { EmptyState, ErrorBox, Loading, PageHead, Pill } from '../components/ui.tsx';
 import { renderMarkdown } from '../markdown.ts';
 import { HtmlViewerButtons } from '../components/HtmlViewer.tsx';
+import { CommentsThread } from '../components/DeliverableTools.tsx';
 
 interface Data {
   deliverable: { id: string; type: string; title: string; status: string; version?: number; publishedAt?: string | null; externalUrl?: string | null; published: boolean };
@@ -26,11 +27,15 @@ export function DeliverableScreen({ clientId, deliverableId }: { clientId: strin
               {d.version && d.version > 1 ? <span class="mono small muted">Version {d.version}</span> : null}
               {d.publishedAt && <span class="mono small muted">Publié le {formatDate(d.publishedAt, { year: true })}</span>}
             </span>}
-            right={d.externalUrl ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">Ouvrir le document ↗</a> : undefined} />
+            right={d.externalUrl && data!.contentMd ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">Ouvrir le document ↗</a> : undefined} />
           {data!.contentMd && <div class="section" style="display:flex;gap:8px;flex-wrap:wrap"><HtmlViewerButtons md={data!.contentMd} title={d.title} /></div>}
           {data!.contentMd
             ? <article class="card md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(data!.contentMd) }} />
+            : d.externalUrl
+            ? <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span>Ce livrable se consulte dans son document.</span>
+                <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">{/^https:\/\/(drive|docs)\.google\.com\//.test(d.externalUrl) ? 'Ouvrir dans Drive ↗' : 'Ouvrir le document ↗'}</a></div>
             : <EmptyState title="Contenu disponible à la publication">Ce livrable est en préparation.</EmptyState>}
+          {(d.published || data!.contentMd || d.externalUrl) && <div id="commentaires"><CommentsThread clientId={clientId} deliverableId={d.id} /></div>}
         </>
       )}
     </>

@@ -43,16 +43,18 @@ const MAX_INSTRUCTION = 2_000;
 async function loadState(db: D1Database, clientId: string) {
   const client = await first<ClientRow>(db, 'SELECT * FROM clients WHERE id = ?1', clientId);
   if (!client) throw notFound();
-  const [answerRows, stepRows, connections] = await Promise.all([
+  const [answerRows, stepRows, connections, assets] = await Promise.all([
     all<{ question_key: string; answer: string | null }>(db, 'SELECT question_key, answer FROM onboarding_answers WHERE client_id = ?1', clientId),
     all<StepRow>(db, 'SELECT * FROM delivery_steps WHERE client_id = ?1', clientId),
     all<{ type: string; state: string; external_id: string | null; last_checked_at: string | null; error_message: string | null }>(db,
       'SELECT type, state, external_id, last_checked_at, error_message FROM connections WHERE client_id = ?1', clientId),
+    all<{ type: string; file_name: string | null; external_url: string | null; description: string | null }>(db,
+      'SELECT type, file_name, external_url, description FROM onboarding_assets WHERE client_id = ?1 ORDER BY created_at', clientId),
   ]);
   const answers = Object.fromEntries(answerRows.map((a) => [a.question_key, a.answer]));
   const gate = deliveryGate(client.onboarding_submitted_at ?? null, answers);
   const byStep = new Map(stepRows.map((r) => [r.step, r]));
-  return { client, answers, gate, byStep, connections, mechanism: client.delivery_mechanism ?? null };
+  return { client, answers, gate, byStep, connections, assets, mechanism: client.delivery_mechanism ?? null };
 }
 type State = Awaited<ReturnType<typeof loadState>>;
 
@@ -91,6 +93,10 @@ function parseIntegrations(json: string | null | undefined): Integrations {
   try { const v = json ? JSON.parse(json) : {}; return { vsl: v.vsl ?? null, calendrier: v.calendrier ?? null }; } catch { return { vsl: null, calendrier: null }; }
 }
 const MAX_EMBED = 20_000;
+const RESOURCE_LABEL: Record<string, string> = {
+  logo: 'Logo', charte: 'Charte graphique', captures_produit: 'Captures du produit', temoignage: 'Témoignage',
+  enregistrement: 'Enregistrement', acces_site: 'Accès au site', autre: 'Autre',
+};
 
 function stepOr404(key: string) {
   const s = DELIVERY_STEP_BY_KEY.get(key);
@@ -148,6 +154,10 @@ function buildBrief(step: DeliveryStep, st: State, weekly: string | null): strin
   out.push(client.drive_folder_url
     ? `- Ressources (logo, captures, témoignages, cas client) : dossier Drive ${client.drive_folder_url}`
     : '- Ressources : aucun dossier fourni. Avancer sans, et lister à la fin ce qui manquerait pour renforcer la pièce.');
+  if (st.assets.length) {
+    out.push(`- Ressources déposées dans l'espace (${st.assets.length}) :`);
+    for (const a of st.assets) out.push(`  - ${RESOURCE_LABEL[a.type] ?? a.type} : ${a.file_name ?? a.external_url ?? ''}${a.description ? ` — ${a.description}` : ''}`);
+  }
   out.push(`- Onboarding envoyé le ${formatDate(client.onboarding_submitted_at ?? null, { year: true })}`);
   out.push('');
 

@@ -43,6 +43,7 @@ export interface ClientRow {
   unmeasured_json?: string;
   ghl_config_json?: string;
   drive_folder_url?: string | null;
+  master_tracker_url?: string | null;
   delivery_mechanism?: string | null;
   is_demo: number;
 }

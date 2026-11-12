@@ -5,6 +5,7 @@ import {
 import { ApiError, api, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
 import { AgencyNote, ErrorBox, Loading, PageHead } from '../components/ui.tsx';
+import { ResourcesPanel } from '../components/Resources.tsx';
 
 interface OnboardingData {
   locked: boolean;
@@ -100,6 +101,10 @@ export function OnboardingScreen({ clientId }: { clientId: string }) {
                   </a>
                 );
               })}
+              <a href="#ressources" class="onb-nav-item" onClick={(e) => { e.preventDefault(); document.getElementById('ressources')?.scrollIntoView({ behavior: 'smooth' }); }}>
+                <span class="small">Vos ressources</span>
+                <span class="mono small muted">logo, captures, témoignages</span>
+              </a>
             </nav>
 
             <div>
@@ -122,6 +127,8 @@ export function OnboardingScreen({ clientId }: { clientId: string }) {
                   </section>
                 );
               })}
+
+              <ResourcesPanel clientId={clientId} />
 
               {isClient && editable.size > 0 && (
                 <div class="card section" style="display:flex;flex-direction:column;gap:10px">
