@@ -270,7 +270,7 @@ const CONN_STATE: Record<string, { label: string; kind: string }> = {
 };
 
 export function ConnectionsScreen({ clientId }: { clientId: string }) {
-  const { data, error } = useApi<{ connections: { id: string; type: string; state: string; lastCheckedAt: string | null; clientAction: string | null; guideId: string | null; errorMessage?: string | null; tokenExpiresAt?: string | null; tokenConfigured?: boolean }[] }>(`/clients/${clientId}/connections`);
+  const { data, error, reload } = useApi<{ connections: { id: string; type: string; state: string; lastCheckedAt: string | null; clientAction: string | null; guideId: string | null; errorMessage?: string | null; tokenExpiresAt?: string | null; tokenConfigured?: boolean }[] }>(`/clients/${clientId}/connections`);
   const { view, me } = useSession();
   const lastSync = useLastSync(clientId);
   const order = ['meta', 'pixel', 'ghl', 'calendrier', 'domaine', 'mailing', 'formulaire'];
@@ -302,14 +302,14 @@ export function ConnectionsScreen({ clientId }: { clientId: string }) {
         </div>
       )}
       {view === 'agence' && me.user.role === 'agence' && (
-        <AgencyConnectionTools clientId={clientId} knownIds={Object.fromEntries((data?.connections ?? []).map((c) => [c.type, (c as { externalId?: string | null }).externalId ?? '']))} />
+        <AgencyConnectionTools clientId={clientId} onDone={reload} knownIds={Object.fromEntries((data?.connections ?? []).map((c) => [c.type, (c as { externalId?: string | null }).externalId ?? '']))} />
       )}
     </>
   );
 }
 
 /** Vue agence : saisie des jetons (chiffrés, jamais réaffichés) et synchronisation manuelle (§13, §16). */
-function AgencyConnectionTools({ clientId, knownIds }: { clientId: string; knownIds: Record<string, string> }) {
+function AgencyConnectionTools({ clientId, knownIds, onDone }: { clientId: string; knownIds: Record<string, string>; onDone: () => void }) {
   const [type, setTypeRaw] = useState<'ghl' | 'meta'>('ghl');
   const [token, setToken] = useState('');
   const [externalId, setExternalId] = useState(knownIds.ghl ?? '');
@@ -322,7 +322,7 @@ function AgencyConnectionTools({ clientId, knownIds }: { clientId: string; known
       const r = await api<{ state: string; error: string | null }>(`/clients/${clientId}/connections/${type}/token`, { method: 'PUT', body: JSON.stringify({ token, externalId }) });
       setToken('');
       setMsg(r.state === 'ok' ? { ok: true, text: 'Jeton enregistré (chiffré) et connexion testée.' } : { ok: false, text: `Jeton enregistré, mais le test a échoué : ${r.error}` });
-    } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); }
+    } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); onDone(); }
   }
   async function sync(fromYearStart = false) {
     setBusy(true); setMsg({ ok: true, text: 'Synchronisation en cours… (quelques secondes à une minute)' });
@@ -338,7 +338,7 @@ function AgencyConnectionTools({ clientId, knownIds }: { clientId: string; known
     } catch (x) {
       const m = (x as Error).message;
       setMsg({ ok: false, text: /^Erreur 5\d\d$/.test(m) ? `${m} : la synchronisation a été interrompue par Cloudflare (limite de calcul ?). Aucune donnée n'a été modifiée.` : m });
-    } finally { setBusy(false); }
+    } finally { setBusy(false); onDone(); }
   }
   return (
     <div class="section card" style="border-color:var(--agency);display:flex;flex-direction:column;gap:10px">
