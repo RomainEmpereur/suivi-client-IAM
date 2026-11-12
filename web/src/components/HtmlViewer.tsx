@@ -28,7 +28,7 @@ export function HtmlViewerButtons({ md, title }: { md: string; title: string }) 
   );
 }
 
-function HtmlViewer({ block, title, onClose }: { block: { kind: 'video' | 'page'; src: string }; title: string; onClose: () => void }) {
+export function HtmlViewer({ block, title, onClose }: { block: { kind: 'video' | 'page'; src: string }; title: string; onClose: () => void }) {
   const [device, setDevice] = useState<(typeof DEVICES)[number]['key']>('bureau');
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };

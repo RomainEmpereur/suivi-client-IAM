@@ -191,3 +191,35 @@ describe('Delivery : accès', () => {
     expect(((await (await call(`/clients/${B}/deliverables/${id}`, { as: CLIENT_B })).json()) as any).contentMd).toBeNull();
   });
 });
+
+describe('Intégrations de la landing (décision 0017)', () => {
+  const PAGE = '<html><body><div class="hero"><!-- OBSIDIAN:VSL:DEBUT --><div class="mock">Lecteur</div><!-- OBSIDIAN:VSL:FIN --></div>'
+    + '<section><!-- OBSIDIAN:CALENDRIER:DEBUT --><div class="mock">Calendrier</div><!-- OBSIDIAN:CALENDRIER:FIN --></section></body></html>';
+
+  it('remplace le contenu des repères, garde les repères, ignore les motifs $ du code', async () => {
+    const { applyIntegrations, integrationMarkers } = await import('../packages/domain/src/index.ts');
+    expect(integrationMarkers(PAGE)).toEqual({ vsl: true, calendrier: true });
+    const r = applyIntegrations(PAGE, { vsl: '<script src="https://fast.wistia.com/x.js"></script>$&', calendrier: null });
+    expect(r.applied).toEqual(['vsl']);
+    expect(r.html).toContain('<!-- OBSIDIAN:VSL:DEBUT -->\n<script src="https://fast.wistia.com/x.js"></script>$&\n<!-- OBSIDIAN:VSL:FIN -->');
+    expect(r.html).not.toContain('Lecteur');
+    expect(r.html).toContain('Calendrier'); // sans code, la maquette reste
+    const again = applyIntegrations(r.html, { vsl: '<iframe src="https://fast.wistia.net/embed/iframe/abc"></iframe>' });
+    expect(again.html).not.toContain('x.js'); // remplaçable autant de fois que nécessaire
+    expect(applyIntegrations('<p>sans repères</p>', { vsl: '<iframe></iframe>' }).missingMarkers).toEqual(['vsl', 'calendrier']);
+  });
+
+  it("l'agence enregistre les codes sur l'étape 3 ; ils survivent à une nouvelle version ; refusés ailleurs et pour le client", async () => {
+    const { call } = boot();
+    await generateAll(call);
+    expect((await patch(call, B, 's3', { integrations: { vsl: 'pas un code' } })).status).toBe(400);
+    expect((await patch(call, B, 's2', { integrations: { vsl: '<iframe></iframe>' } })).status).toBe(400);
+    expect((await patch(call, B, 's3', { integrations: { calendrier: '<iframe src="https://api.leadconnectorhq.com/widget/booking/x"></iframe>' } }, CLIENT_B)).status).toBe(403);
+    expect((await patch(call, B, 's3', { integrations: { vsl: '<script src="https://fast.wistia.com/a.js"></script>', calendrier: '<iframe src="https://api.leadconnectorhq.com/widget/booking/x"></iframe>' } })).status).toBe(200);
+    await deposit(call, B, 's3', { contentMd: '# Landing v2\n\n```html page\n' + PAGE + '\n```' });
+    const s3 = await step(call, B, 's3');
+    expect(s3.integrations.vsl).toContain('wistia');
+    expect(s3.integrations.calendrier).toContain('leadconnectorhq');
+    expect((await step(call, B, 's2')).integrations).toBeNull();
+  });
+});

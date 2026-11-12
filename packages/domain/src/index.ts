@@ -8,3 +8,4 @@ export * from './onboarding.ts';
 export * from './ghl-rules.ts';
 export * from './delivery.ts';
 export * from './pilotage.ts';
+export * from './integrations.ts';

@@ -3,13 +3,16 @@ import { formatDate, formatDateTime } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { AgencyNote, ErrorBox, Loading, PageHead, Pill } from '../components/ui.tsx';
 import { renderMarkdown } from '../markdown.ts';
-import { HtmlViewerButtons } from '../components/HtmlViewer.tsx';
+import { HtmlViewer, HtmlViewerButtons } from '../components/HtmlViewer.tsx';
+import { extractHtmlBlocks } from '../markdown.ts';
+import { INTEGRATIONS, applyIntegrations, integrationMarkers, type IntegrationKey } from '@obsidian/domain';
 
 interface Step {
   key: string; label: string; recurring: boolean; needsMechanism: boolean; deliverable: string | null;
   status: 'a_faire' | 'en_cours' | 'a_valider' | 'valide'; resultUrl: string | null; notes: string | null; validatedAt: string | null;
   contentMd: string | null; contentVersion: number; contentSource: 'claude' | 'agence' | null; generatedAt: string | null;
   queued: boolean; queuedAt: string | null; instruction: string | null; stale: boolean; lastError: string | null;
+  integrations: { vsl: string | null; calendrier: string | null } | null;
   available: boolean; lockedReason: string | null; validationBlocker: string | null;
 }
 interface DeliveryData {
@@ -174,6 +177,10 @@ function StepCard({ clientId, step, mechanism, onChange }: { clientId: string; s
             </div>
           )}
 
+          {step.key === 's3' && hasText && !editing && step.integrations && (
+            <IntegrationsPanel md={step.contentMd!} saved={step.integrations} busy={busy} onSave={(integrations, ok) => patch({ integrations }, ok)} />
+          )}
+
           {hasText && !editing && (
             <>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-self:flex-start">
@@ -226,5 +233,50 @@ function StepCard({ clientId, step, mechanism, onChange }: { clientId: string; s
       )}
       {msg && <div class="small" role="status" style={`color:var(--${msg.kind === 'ok' ? 'accent' : 'alert'})`}>{msg.text}</div>}
     </section>
+  );
+}
+
+/**
+ * Intégrations de la landing (décision 0017) : codes Wistia et GoHighLevel insérés entre les repères de la page,
+ * sans régénération. Aperçu de la version finale et copie du code à coller dans le bloc de code personnalisé de GHL.
+ */
+function IntegrationsPanel({ md, saved, busy, onSave }: {
+  md: string; saved: { vsl: string | null; calendrier: string | null }; busy: boolean;
+  onSave: (v: Record<IntegrationKey, string | null>, ok: string) => void;
+}) {
+  const page = extractHtmlBlocks(md).find((b) => b.kind === 'page');
+  const [codes, setCodes] = useState<Record<IntegrationKey, string>>({ vsl: saved.vsl ?? '', calendrier: saved.calendrier ?? '' });
+  const [viewing, setViewing] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  if (!page) return null;
+  const markers = integrationMarkers(page.src);
+  const final = applyIntegrations(page.src, saved);
+  const dirty = INTEGRATIONS.some((i) => (codes[i.key] ?? '') !== (saved[i.key] ?? ''));
+  const done = INTEGRATIONS.filter((i) => saved[i.key]).length;
+  return (
+    <details class="card" style="background:var(--surface-2)" open={done > 0 || undefined}>
+      <summary style="cursor:pointer"><strong>Intégrations</strong> <span class="small muted">· VSL Wistia et calendrier GoHighLevel · {done}/2 branché{done > 1 ? 's' : ''}</span></summary>
+      <p class="small muted" style="margin:8px 0">
+        Une fois le design validé, collez les codes d'intégration : l'espace les place dans la page à l'endroit prévu, sans rien régénérer. Puis copiez le code final dans le bloc de code personnalisé de la page GoHighLevel.
+      </p>
+      {INTEGRATIONS.map((i) => (
+        <label class="field" style="margin-bottom:10px">{i.label}
+          {!markers[i.key]
+            ? <span class="small" style="color:var(--alert)">Repère absent de cette version de la landing : faites-la reprendre (« ajoute les repères d'intégration ») avant de brancher ce code.</span>
+            : <span class="hint">{i.hint}</span>}
+          <textarea rows={3} value={codes[i.key]} disabled={!markers[i.key]} style="font-family:var(--font-mono);font-size:12px"
+            placeholder={i.key === 'vsl' ? '<script src="https://fast.wistia.com/…"></script> …' : '<iframe src="https://api.leadconnectorhq.com/widget/booking/…"></iframe> …'}
+            onInput={(e) => setCodes({ ...codes, [i.key]: (e.target as HTMLTextAreaElement).value })} />
+        </label>
+      ))}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        {dirty && <button class="btn" disabled={busy} onClick={() => onSave({ vsl: codes.vsl.trim() || null, calendrier: codes.calendrier.trim() || null }, 'Intégrations enregistrées.')}>Enregistrer les codes</button>}
+        <button class="ghost-btn" disabled={dirty} title={dirty ? 'Enregistrez d\'abord les codes' : undefined} onClick={() => setViewing(true)}>Voir la version finale</button>
+        <button class="ghost-btn" disabled={dirty} onClick={async () => setCopied(await copy(final.html) ? 'Code final copié : collez-le dans le bloc de code personnalisé de GHL.' : 'Copie impossible depuis ce navigateur.')}>Copier le code final</button>
+        {copied && <span class="small" style="color:var(--accent)">{copied}</span>}
+      </div>
+      <p class="small muted" style="margin:8px 0 0">L'aperçu est isolé de l'espace pour la sécurité : certains lecteurs (Wistia) peuvent ne pas s'y lancer. Ils fonctionneront sur la page publiée dans GoHighLevel.</p>
+      {viewing && <HtmlViewer block={{ kind: 'page', src: final.html }} title="Landing — version finale" onClose={() => setViewing(false)} />}
+    </details>
   );
 }

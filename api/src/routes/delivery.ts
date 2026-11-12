@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
   ALL_QUESTIONS, ALWAYS_SECTIONS, CHAIN_STEPS, DELIVERY_STEPS, DELIVERY_STEP_BY_KEY, MASTER_PROMPT, ONBOARDING_SECTIONS, deliveryGate, derived,
-  formatDate, formatEuros, formatInt, formatPercent, isAnswered, masterSection, stepAvailability, stepInstructions, validationBlocker,
+  formatDate, formatEuros, formatInt, formatPercent, type Integrations, isAnswered, masterSection, stepAvailability, stepInstructions, validationBlocker,
   type DeliveryStep,
 } from '@obsidian/domain';
 import type { AppEnv, Bindings, ClientRow } from '../env.ts';
@@ -34,6 +34,7 @@ interface StepRow {
   result_url: string | null; notes: string | null; validated_at: string | null; updated_at: string;
   content_md: string | null; content_version: number; content_source: string | null; generated_at: string | null;
   queued_at: string | null; instruction: string | null; stale: number; last_error: string | null;
+  integrations_json?: string | null;
 }
 
 const MAX_CONTENT = 200_000;
@@ -66,6 +67,7 @@ function serializeStep(s: DeliveryStep, st: State) {
     contentMd: row?.content_md ?? null, contentVersion: row?.content_version ?? 0, contentSource: row?.content_source ?? null,
     generatedAt: row?.generated_at ?? null, queued: Boolean(row?.queued_at), queuedAt: row?.queued_at ?? null,
     instruction: row?.instruction ?? null, stale: Boolean(row?.stale), lastError: row?.last_error ?? null,
+    integrations: s.key === 's3' ? parseIntegrations(row?.integrations_json) : null,
     available: a.available, lockedReason: a.reason,
     validationBlocker: validationBlocker(s, { hasContent: hasContent(row), mechanism: st.mechanism, stale: Boolean(row?.stale) }),
   };
@@ -81,6 +83,12 @@ delivery.get('/:clientId/delivery', async (c) => {
     steps: DELIVERY_STEPS.map((s) => serializeStep(s, st)),
   });
 });
+
+/** Codes d'intégration de la landing (décision 0017). */
+function parseIntegrations(json: string | null | undefined): Integrations {
+  try { const v = json ? JSON.parse(json) : {}; return { vsl: v.vsl ?? null, calendrier: v.calendrier ?? null }; } catch { return { vsl: null, calendrier: null }; }
+}
+const MAX_EMBED = 20_000;
 
 function stepOr404(key: string) {
   const s = DELIVERY_STEP_BY_KEY.get(key);
@@ -335,6 +343,23 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
       changes.mechanism = next;
       mechanism = next;
     }
+  }
+  if ('integrations' in body) {
+    if (step.key !== 's3') throw new HttpError(400, 'Les intégrations concernent la landing (étape 3).');
+    const v = body.integrations as Record<string, unknown> | null;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new HttpError(400, 'Intégrations invalides.');
+    const next = parseIntegrations(row?.integrations_json);
+    for (const k of ['vsl', 'calendrier'] as const) {
+      if (!(k in v)) continue;
+      const code = v[k];
+      if (code === null || code === '') { next[k] = null; continue; }
+      if (typeof code !== 'string' || code.length > MAX_EMBED) throw new HttpError(400, `Code d'intégration ${k === 'vsl' ? 'Wistia' : 'du calendrier'} invalide (20 000 caractères au plus).`);
+      if (!/<(iframe|script|div|wistia-player)\b/i.test(code)) throw new HttpError(400, `Collez le code d'intégration complet ${k === 'vsl' ? 'de Wistia' : 'du calendrier GoHighLevel'} (balises iframe, script ou div).`);
+      next[k] = code.trim();
+    }
+    stmts.push(db.prepare('UPDATE delivery_steps SET integrations_json = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4')
+      .bind(JSON.stringify(next), now, st.client.id, step.key));
+    changes.integrations = { vsl: Boolean(next.vsl), calendrier: Boolean(next.calendrier) };
   }
   if (body.stale === false) {
     stmts.push(db.prepare('UPDATE delivery_steps SET stale = 0, updated_at = ?1 WHERE client_id = ?2 AND step = ?3').bind(now, st.client.id, step.key));
