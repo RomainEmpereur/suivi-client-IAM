@@ -80,3 +80,18 @@ describe('Atomicité', () => {
     expect((raw.prepare('SELECT COUNT(*) n FROM appointments').get() as any).n).toBe(0);
   });
 });
+
+describe('Leads du CRM (décision 0013)', () => {
+  it('la synchro réécrit la liste des leads avec leur étape et leur prochain rendez-vous', async () => {
+    const { d1, raw } = db();
+    await syncGhl(d1 as any, 'cl', config, fake, W, NOW);
+    const leads = raw.prepare(`SELECT contact_id, stage_name, next_appointment_at FROM crm_leads WHERE client_id = 'cl' ORDER BY contact_id`).all() as any[];
+    expect(leads.map((l) => l.contact_id)).toEqual(['c1', 'c2', 'c3']);
+    expect(leads.find((l) => l.contact_id === 'c1').stage_name).toBe('Après appel');
+    expect(leads.find((l) => l.contact_id === 'c2').next_appointment_at).toBe(new Date('2026-11-20T10:00:00+01:00').toISOString());
+    const appt = raw.prepare(`SELECT ghl_contact_id FROM appointments WHERE ghl_appointment_id = 'e1'`).get() as any;
+    expect(appt.ghl_contact_id).toBe('c1');
+    await syncGhl(d1 as any, 'cl', config, fake, W, NOW);
+    expect(raw.prepare(`SELECT COUNT(*) n FROM crm_leads WHERE client_id = 'cl'`).get()).toEqual({ n: 3 });
+  });
+});

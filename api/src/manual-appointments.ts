@@ -11,7 +11,10 @@ export const MANUAL_ENTITY = 'saisie_manuelle';
  */
 export async function refreshManualAppointments(db: D1Database, clientId: string) {
   const appts = await all<{ booked_at: string; status: string }>(db,
-    `SELECT booked_at, status FROM appointments WHERE client_id = ?1 AND origin = 'saisie' AND counts_toward_target = 1`, clientId);
+    `SELECT a.booked_at, a.status FROM appointments a WHERE a.client_id = ?1 AND a.origin = 'saisie' AND a.counts_toward_target = 1
+       AND NOT (a.ghl_contact_id IS NOT NULL AND EXISTS (SELECT 1 FROM appointments g WHERE g.client_id = a.client_id
+         AND g.origin != 'saisie' AND g.ghl_contact_id = a.ghl_contact_id))`, clientId);
+  // Un rendez-vous saisi rattaché à un lead qui a déjà son rendez-vous dans le CRM n'est pas compté deux fois.
   const old = await all<{ date: string }>(db, `SELECT date FROM metrics_daily WHERE client_id = ?1 AND ad_id = ?2`, clientId, MANUAL_ENTITY);
   const byDay = new Map<string, { booked: number; held: number }>();
   for (const a of appts) {

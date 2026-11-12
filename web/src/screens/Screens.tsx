@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import {
   DELIVERABLE_STATUS_LABEL, DELIVERABLE_TYPE_LABEL, PHASE_STATE_LABEL, formatDate, formatDateTime, formatEuros, formatInt,
   type AppointmentCounter, type DeliverableStatus, type PhaseState,
@@ -484,26 +484,63 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
   );
 }
 
+interface CrmLead { contactId: string; name: string | null; company: string | null; stage: string | null; pipeline: string | null; enteredAt: string | null; nextAppointmentAt: string | null; status: string | null }
+
+/** Ajout d'un rendez-vous réservé hors du CRM, avec vérification du nom dans les leads synchronisés du CRM. */
 function AddAppointment({ clientId, onDone }: { clientId: string; onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [when, setWhen] = useState('');
+  const [lead, setLead] = useState<CrmLead | null>(null);
+  const [found, setFound] = useState<{ leads: CrmLead[]; crmSynced: boolean; syncedAt: string | null; q: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const timer = useRef<number>();
   if (!open) return <button class="btn" onClick={() => setOpen(true)}>Ajouter un rendez-vous</button>;
+  function type(v: string) {
+    setName(v); setLead(null);
+    clearTimeout(timer.current);
+    const q = v.trim();
+    if (q.length < 2) { setFound(null); return; }
+    timer.current = window.setTimeout(async () => {
+      try { const r = await api<{ leads: CrmLead[]; crmSynced: boolean; syncedAt: string | null }>(`/clients/${clientId}/crm-leads?q=${encodeURIComponent(q)}`); setFound({ ...r, q }); }
+      catch { setFound(null); }
+    }, 300);
+  }
   async function send(e: Event) {
     e.preventDefault(); setErr(null);
     try {
       // La saisie datetime-local est l'heure de Paris du navigateur ; on l'envoie en ISO.
-      await api(`/clients/${clientId}/appointments`, { method: 'POST', body: JSON.stringify({ contactName: name, scheduledAt: new Date(when).toISOString() }) });
-      setOpen(false); setName(''); setWhen(''); onDone();
+      await api(`/clients/${clientId}/appointments`, { method: 'POST', body: JSON.stringify({ contactName: name, scheduledAt: new Date(when).toISOString(), ghlContactId: lead?.contactId ?? null }) });
+      setOpen(false); setName(''); setWhen(''); setLead(null); setFound(null); onDone();
     } catch (x) { setErr((x as Error).message); }
   }
   return (
-    <form class="card date-range" onSubmit={send} style="padding:10px 12px">
-      <input type="text" placeholder="Prénom N. du contact" value={name} required onInput={(e) => setName((e.target as HTMLInputElement).value)} aria-label="Contact" />
-      <input type="datetime-local" value={when} required onInput={(e) => setWhen((e.target as HTMLInputElement).value)} aria-label="Date et heure" />
-      <button class="btn" type="submit">Ajouter</button>
-      <button class="ghost-btn" type="button" onClick={() => setOpen(false)}>Annuler</button>
+    <form class="card" onSubmit={send} style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:min(520px,100%)">
+      <div class="date-range">
+        <input type="text" placeholder="Nom du contact ou de l'entreprise" value={name} required onInput={(e) => type((e.target as HTMLInputElement).value)} aria-label="Contact" autoComplete="off" />
+        <input type="datetime-local" value={when} required onInput={(e) => setWhen((e.target as HTMLInputElement).value)} aria-label="Date et heure" />
+        <button class="btn" type="submit">Ajouter</button>
+        <button class="ghost-btn" type="button" onClick={() => setOpen(false)}>Annuler</button>
+      </div>
+      {lead ? (
+        <div class="small" style="color:var(--accent)">
+          ✓ Lead trouvé dans le CRM : <strong>{lead.name}</strong>{lead.company ? ` · ${lead.company}` : ''}{lead.stage ? ` · étape « ${lead.stage} »` : ''}{lead.enteredAt ? ` · entré le ${formatDate(lead.enteredAt)}` : ''}
+          {lead.nextAppointmentAt && <div style="color:var(--warn)">Ce lead a déjà un rendez-vous dans le CRM le {formatDateTime(lead.nextAppointmentAt)} : il apparaît déjà dans la liste, inutile de l'ajouter.</div>}
+        </div>
+      ) : found && found.q === name.trim() && (
+        found.leads.length ? (
+          <div class="small" style="display:flex;flex-direction:column;gap:4px">
+            <span class="muted">Leads du CRM correspondants — choisissez le bon :</span>
+            {found.leads.map((l) => (
+              <button type="button" class="ghost-btn" style="text-align:left" onClick={() => { setLead(l); setName(l.name ?? name); }}>
+                <strong>{l.name ?? '—'}</strong>{l.company ? ` · ${l.company}` : ''}{l.stage ? ` · ${l.stage}` : ''}{l.enteredAt ? ` · entré le ${formatDate(l.enteredAt)}` : ''}{l.nextAppointmentAt ? ` · RDV le ${formatDateTime(l.nextAppointmentAt)}` : ''}
+              </button>
+            ))}
+          </div>
+        ) : found.crmSynced ? (
+          <div class="small" style="color:var(--warn)">Pas trouvé dans le CRM (liste mise à jour le {formatDateTime(found.syncedAt)}). Vérifiez l'orthographe, ou ajoutez-le quand même s'il a été réservé ailleurs.</div>
+        ) : null
+      )}
       {err && <span class="small" style="color:var(--alert)">{err}</span>}
     </form>
   );

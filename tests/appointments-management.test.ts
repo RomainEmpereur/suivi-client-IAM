@@ -75,3 +75,26 @@ describe('Rendez-vous saisis à la main : comptés dans les chiffres', () => {
     expect(rollup.b).toBe(1);
   });
 });
+
+describe('Vérification des leads du CRM à la saisie', () => {
+  it('recherche par nom ; un rendez-vous saisi rattaché à un lead qui a déjà son RDV GHL n’est pas compté deux fois', async () => {
+    const { setup, B, CLIENT_B, CLIENT_A, A } = await import('./helpers/app.ts');
+    const { call, raw } = setup();
+    raw.prepare(`INSERT INTO crm_leads (client_id, opportunity_id, contact_id, name, company, stage_name, entered_at) VALUES (?, 'o1', 'ct1', 'Sophie Guillet', 'Boutique Garance', 'R1 / Démo planifiée', '2026-11-08T10:00:00Z'), (?, 'o2', 'ct2', 'Linda Sanquer', 'Balaruc', 'Nouveau Lead Meta', '2026-11-09T10:00:00Z')`).run(B, B);
+    const s = (await (await call(`/clients/${B}/crm-leads?q=garance`, { as: CLIENT_B })).json()) as any;
+    expect(s.leads).toEqual([expect.objectContaining({ contactId: 'ct1', name: 'Sophie Guillet', stage: 'R1 / Démo planifiée' })]);
+    expect(((await (await call(`/clients/${B}/crm-leads?q=inconnu`, { as: CLIENT_B })).json()) as any)).toMatchObject({ leads: [], crmSynced: true });
+    expect((await call(`/clients/${B}/crm-leads?q=sophie`, { as: CLIENT_A })).status).toBe(404);
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    expect((await call(`/clients/${B}/appointments`, { as: CLIENT_B, method: 'POST', body: { contactName: 'Sophie Guillet', scheduledAt: past, ghlContactId: 'ct_inexistant' } })).status).toBe(400);
+    expect((await call(`/clients/${B}/appointments`, { as: CLIENT_B, method: 'POST', body: { contactName: 'Sophie Guillet', scheduledAt: past, ghlContactId: 'ct1' } })).status).toBe(201);
+    const manual = () => (raw.prepare(`SELECT appointments_booked b FROM metrics_daily WHERE client_id = ? AND ad_id = 'saisie_manuelle'`).get(B) as any)?.b ?? 0;
+    expect(manual()).toBe(1);
+    // La synchro GHL rapporte ensuite son propre rendez-vous pour ce contact : la saisie n'est plus comptée.
+    raw.prepare(`INSERT INTO appointments (id, client_id, ghl_appointment_id, contact_name, booked_at, scheduled_at, status, origin, ghl_contact_id) VALUES ('ap_g1', ?, 'g1', 'Sophie Guillet', ?, ?, 'prevu', 'ghl', 'ct1')`).run(B, past, past);
+    // Recalcul déclenché par un nouvel ajout sans rattachement.
+    await call(`/clients/${B}/appointments`, { as: CLIENT_B, method: 'POST', body: { contactName: 'Autre prospect', scheduledAt: past } });
+    expect(manual()).toBe(1);
+    void A;
+  });
+});

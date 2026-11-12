@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { scopeClient } from '../scope.ts';
-import { audit, first, newId, nowIso, run } from '../db.ts';
+import { all, audit, first, newId, nowIso, run } from '../db.ts';
 import { refreshManualAppointments } from '../manual-appointments.ts';
 import { HttpError, notFound } from '../errors.ts';
 
@@ -22,6 +22,24 @@ const STATUSES = ['prevu', 'honore', 'absent', 'annule'] as const;
 interface ApptRow {
   id: string; status: string; counts_toward_target: number; exclusion_reason: string | null; scheduled_at: string;
 }
+
+appointments.use('/:clientId/crm-leads', scopeClient);
+
+/** Recherche d'un lead du CRM par nom ou entreprise (liste synchronisée chaque matin, aucun appel GHL en direct). */
+appointments.get('/:clientId/crm-leads', async (c) => {
+  const client = c.get('client');
+  const q = (c.req.query('q') ?? '').trim().toLowerCase();
+  const synced = await first<{ n: number; at: string | null }>(c.env.DB, 'SELECT COUNT(*) AS n, MAX(synced_at) AS at FROM crm_leads WHERE client_id = ?1', client.id);
+  if (q.length < 2) return c.json({ leads: [], crmSynced: Boolean(synced?.n), syncedAt: synced?.at ?? null });
+  const like = `%${q.replace(/[%_]/g, '')}%`;
+  const rows = await all<{ contact_id: string; name: string | null; company: string | null; stage_name: string | null; pipeline_name: string | null; entered_at: string | null; next_appointment_at: string | null; status: string | null }>(c.env.DB,
+    `SELECT contact_id, name, company, stage_name, pipeline_name, entered_at, next_appointment_at, status FROM crm_leads
+     WHERE client_id = ?1 AND (lower(name) LIKE ?2 OR lower(company) LIKE ?2) ORDER BY entered_at DESC LIMIT 8`, client.id, like);
+  return c.json({
+    crmSynced: Boolean(synced?.n), syncedAt: synced?.at ?? null,
+    leads: rows.map((r) => ({ contactId: r.contact_id, name: r.name, company: r.company, stage: r.stage_name, pipeline: r.pipeline_name, enteredAt: r.entered_at, nextAppointmentAt: r.next_appointment_at, status: r.status })),
+  });
+});
 
 appointments.patch('/:clientId/appointments/:appointmentId', async (c) => {
   requireAgency(c);
@@ -62,7 +80,13 @@ appointments.post('/:clientId/appointments', async (c) => {
   const client = c.get('client');
   const user = c.get('user');
   if (user.role === 'agence') requireAgency(c); // l'agence en vue client reste en lecture seule
-  const body = await c.req.json<{ contactName?: string; scheduledAt?: string }>().catch(() => ({} as Record<string, never>));
+  const body = await c.req.json<{ contactName?: string; scheduledAt?: string; ghlContactId?: string | null }>().catch(() => ({} as Record<string, never>));
+  let ghlContactId: string | null = null;
+  if (body.ghlContactId) {
+    const lead = await first<{ contact_id: string }>(c.env.DB, 'SELECT contact_id FROM crm_leads WHERE client_id = ?1 AND contact_id = ?2', client.id, body.ghlContactId);
+    if (!lead) throw new HttpError(400, 'Lead introuvable dans le CRM synchronisé.');
+    ghlContactId = lead.contact_id;
+  }
   const name = (body.contactName ?? '').trim();
   if (!name || name.length > 120) throw new HttpError(400, 'Nom du contact requis (120 caractères maximum).');
   const t = Date.parse(body.scheduledAt ?? '');
@@ -70,9 +94,9 @@ appointments.post('/:clientId/appointments', async (c) => {
   const id = newId('ap');
   const now = nowIso();
   await run(c.env.DB,
-    `INSERT INTO appointments (id, client_id, contact_name, booked_at, scheduled_at, status, origin, created_by_user_id, status_source)
-     VALUES (?1, ?2, ?3, ?4, ?5, 'prevu', 'saisie', ?6, ?7)`,
-    id, client.id, name, now, new Date(t).toISOString(), user.id, user.role === 'agence' ? 'agence' : 'client');
+    `INSERT INTO appointments (id, client_id, contact_name, booked_at, scheduled_at, status, origin, created_by_user_id, status_source, ghl_contact_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, 'prevu', 'saisie', ?6, ?7, ?8)`,
+    id, client.id, name, now, new Date(t).toISOString(), user.id, user.role === 'agence' ? 'agence' : 'client', ghlContactId);
   await refreshManualAppointments(c.env.DB, client.id);
   await audit(c.env.DB, {
     clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'rdv_ajout', objectType: 'appointment', objectId: id,

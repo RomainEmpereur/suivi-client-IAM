@@ -51,7 +51,7 @@ export function resolveGhlConfig(
   });
   const stagesFor = (names: string[]) => names.flatMap((n) => {
     const ids = pick.flatMap((p) => p.stages.filter((st) => norm(st.name) === norm(n)).map((st) => st.id));
-    if (!ids.length) throw new Error(`Étape GHL introuvable : « ${n} » dans ${pick.map((p) => `« ${p.name} »`).join(', ')}`);
+    if (!ids.length) throw new Error(`Étape GHL introuvable : « ${n} » dans ${pick.map((p) => `« ${p.name} »`).join(', ')}. Étapes disponibles : ${pick.flatMap((p) => p.stages.map((st) => `« ${st.name} »`)).join(', ')}`);
     return ids;
   });
   const display = (named.displayPipelineNames ?? named.pipelineNames).map((n) => pick.find((p) => norm(p.name) === norm(n))?.id)

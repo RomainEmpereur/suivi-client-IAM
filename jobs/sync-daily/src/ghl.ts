@@ -104,10 +104,10 @@ export async function syncGhl(
     const o = refOpp(e.contactId);
     const k = keyOf(o);
     statements.push(db.prepare(
-      `INSERT INTO appointments (id, client_id, ghl_appointment_id, contact_name, booked_at, scheduled_at, status, campaign_id, ad_id, counts_toward_target, exclusion_reason)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+      `INSERT INTO appointments (id, client_id, ghl_appointment_id, contact_name, booked_at, scheduled_at, status, campaign_id, ad_id, counts_toward_target, exclusion_reason, ghl_contact_id)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
        ON CONFLICT (client_id, ghl_appointment_id) DO UPDATE SET
-         contact_name = excluded.contact_name, booked_at = excluded.booked_at, scheduled_at = excluded.scheduled_at,
+         contact_name = excluded.contact_name, ghl_contact_id = excluded.ghl_contact_id, booked_at = excluded.booked_at, scheduled_at = excluded.scheduled_at,
          campaign_id = excluded.campaign_id, ad_id = excluded.ad_id,
          status = CASE WHEN appointments.status_source = 'agence' THEN appointments.status ELSE excluded.status END,
          counts_toward_target = CASE WHEN appointments.status_source = 'agence' THEN appointments.counts_toward_target ELSE excluded.counts_toward_target END,
@@ -116,7 +116,7 @@ export async function syncGhl(
     ).bind(`ap_${clientId}_${e.id}`, clientId, e.id, isTest ? 'Test interne' : displayName(e),
       new Date(e.dateAdded).toISOString(), new Date(e.startTime).toISOString(), status,
       k.campaignId === NR ? null : k.campaignId, k.adId === NR || k.adId.startsWith('campagne:') ? null : k.adId,
-      isTest ? 0 : 1, isTest ? 'Test interne' : null));
+      isTest ? 0 : 1, isTest ? 'Test interne' : null, e.contactId));
     if (isTest) continue;
     const bookedDay = parisDay(e.dateAdded);
     if (inWindow(bookedDay)) {
@@ -159,6 +159,37 @@ export async function syncGhl(
           .bind(clientId, rank * 100 + st.position + 1, st.name, n, pipe.name));
       }
     });
+  }
+  // Leads du pipeline (décision 0013) : réécrits à chaque passage, pour la vérification des rendez-vous saisis.
+  {
+    const pipes = pipelines ?? (await ghl.pipelines(config.locationId)).pipelines;
+    const stageName = new Map(pipes.flatMap((p) => p.stages.map((st) => [st.id, st.name] as const)));
+    const pipeName = new Map(pipes.map((p) => [p.id, p.name] as const));
+    const nextAppt = new Map<string, string>();
+    for (const e of events) {
+      const st = e.appointmentStatus ?? e.appoinmentStatus;
+      if (st === 'cancelled' || Date.parse(e.startTime) < now) continue;
+      const cur = nextAppt.get(e.contactId);
+      const iso = new Date(e.startTime).toISOString();
+      if (!cur || iso < cur) nextAppt.set(e.contactId, iso);
+    }
+    const leads = opps.map((o) => ({
+      opportunity_id: o.id, contact_id: o.contactId, name: (o.contact?.name || o.name || '').trim() || null,
+      company: o.contact?.companyName ?? null, pipeline_name: pipeName.get(o.pipelineId) ?? null,
+      stage_name: stageName.get(o.pipelineStageId) ?? null, status: o.status, source: o.source ?? null,
+      entered_at: o.createdAt, next_appointment_at: nextAppt.get(o.contactId) ?? null,
+    }));
+    statements.push(db.prepare('DELETE FROM crm_leads WHERE client_id = ?1').bind(clientId));
+    for (let i = 0; i < leads.length; i += 200) {
+      statements.push(db.prepare(
+        `INSERT INTO crm_leads (client_id, opportunity_id, contact_id, name, company, pipeline_name, stage_name, status, source, entered_at, next_appointment_at)
+         SELECT ?1, j.value ->> '$.opportunity_id', j.value ->> '$.contact_id', j.value ->> '$.name', j.value ->> '$.company',
+           j.value ->> '$.pipeline_name', j.value ->> '$.stage_name', j.value ->> '$.status', j.value ->> '$.source',
+           j.value ->> '$.entered_at', j.value ->> '$.next_appointment_at'
+         FROM json_each(?2) AS j WHERE true
+         ON CONFLICT (client_id, opportunity_id) DO NOTHING`,
+      ).bind(clientId, JSON.stringify(leads.slice(i, i + 200))));
+    }
   }
   for (const sql of ROLLUP_STATEMENTS) statements.push(db.prepare(sql).bind(clientId, window.from, window.to));
 
