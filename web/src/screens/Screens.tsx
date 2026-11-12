@@ -5,7 +5,6 @@ import {
 } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
-import { AnalysesBlock } from './Analyses.tsx';
 import { Counter } from '../components/Counter.tsx';
 import { CONNECTION_LABEL, type ClientOverview } from '../components/ClientAlerts.tsx';
 import {
@@ -13,7 +12,7 @@ import {
 } from '../components/ui.tsx';
 
 /** undefined tant que l'aperçu n'est pas chargé (ou refusé) : on n'affiche alors aucune date. */
-const useLastSync = (clientId: string) => { const d = useApi<ClientOverview>(`/clients/${clientId}`).data; return d ? d.lastSync : undefined; };
+export const useLastSync = (clientId: string) => { const d = useApi<ClientOverview>(`/clients/${clientId}`).data; return d ? d.lastSync : undefined; };
 
 // ─────────────────────────── Infrastructure (§10) ───────────────────────────
 
@@ -555,21 +554,7 @@ function AddAppointment({ clientId, onDone }: { clientId: string; onDone: () => 
 
 interface Reco { id: string; date: string; severity: string; title: string; body: string; state: string; published?: boolean; internalNote?: string | null; repeatCount: number }
 
-export function PilotageScreen({ clientId }: { clientId: string }) {
-  const lastSync = useLastSync(clientId);
-  return (
-    <>
-      <PageHead a="Pilotage" b="détaillé" lastSync={lastSync} sub="L'analyse de vos campagnes, sur la période choisie, et ce qu'il faut faire." />
-      <AnalysesBlock clientId={clientId} />
-      {['02 · KPI clés', '03 · Du clic à la vente', '04 · Évolution', '05 · Campagnes', '06 · Publicités'].map((b) => (
-        <div class="section">
-          <div class="label" style="margin-bottom:8px">{b}</div>
-          <EmptyState title="Bloc livré au lot 5">Les seuils, verdicts, funnel, courbes annotées et le tableau des publicités (coût par rendez-vous par créative) arrivent au lot 5.</EmptyState>
-        </div>
-      ))}
-    </>
-  );
-}
+export { PilotageScreen } from './Pilotage.tsx';
 
 // ─────────────────────────── Écrans des lots suivants ───────────────────────────
 

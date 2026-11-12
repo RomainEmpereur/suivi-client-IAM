@@ -312,3 +312,6 @@ tr.warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .md-table table { border-collapse: collapse; width: 100%; font-size: 14px; }
 .md-table th, .md-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
 .md-table th { background: var(--surface-2); }
+
+/* Pilotage : publicité qui a dépensé sans rendez-vous (§9 bloc 06) */
+tr.row-alert td { background: var(--alert-soft); }

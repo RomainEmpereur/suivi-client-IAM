@@ -143,7 +143,7 @@ function ClientScreen({ clientId, screen, subId, search }: { clientId: string; s
   switch (screen) {
     case 'livrables': return subId ? <DeliverableScreen clientId={clientId} deliverableId={subId} /> : <InfrastructureScreen clientId={clientId} />;
     case 'tableau-de-bord': return <DashboardScreen clientId={clientId} search={search} />;
-    case 'pilotage': return <PilotageScreen clientId={clientId} />;
+    case 'pilotage': return <PilotageScreen clientId={clientId} search={search} />;
     case 'infrastructure': return <InfrastructureScreen clientId={clientId} />;
     case 'connexions': return <ConnectionsScreen clientId={clientId} />;
     case 'guides': return <GuidesScreen clientId={clientId} />;

@@ -7,3 +7,4 @@ export * from './thresholds.ts';
 export * from './onboarding.ts';
 export * from './ghl-rules.ts';
 export * from './delivery.ts';
+export * from './pilotage.ts';
