@@ -28,3 +28,11 @@ Contrainte : ne pas payer de clé API Anthropic.
 - Migration 0009 (contenu, versions, file, « à revoir » ; `deliverables.content_md`).
 - La rédaction consomme le quota de l'abonnement Claude ; une file non traitée reprend au passage suivant.
 - Le brief reste copiable pour une rédaction manuelle dans le projet Claude.
+
+## Mise en place (12 nov. 2026)
+- Application Access « bypass » limitée à `espace-obsidian.obsidianpartners.workers.dev/api/robot` (production seulement).
+- Clé `DELIVERY_ROBOT_TOKEN` : secret du Worker de production, saisie par Romain ; même valeur enregistrée par Romain dans les
+  secrets réseau de l'environnement Claude Code « suivi-client-iam » (injectée par le proxy, jamais visible).
+- Tâche planifiée « Delivery automatique Obsidian » : chaque heure de 7 h 17 à 21 h 17 (Paris), une nouvelle session lit la file,
+  rédige et dépose. Créée sans connecteurs : l'étape 1A se rabat sur la recherche web tant que le connecteur Meta
+  n'est pas ajouté à la tâche depuis claude.ai (Routines).
