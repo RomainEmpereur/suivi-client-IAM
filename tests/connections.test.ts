@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { decryptToken, encryptToken } from '../api/src/crypto.ts';
 import { A, AGENCE, CLIENT_A, setup } from './helpers/app.ts';
 
@@ -23,8 +23,18 @@ describe('Saisie des jetons et synchronisation manuelle', () => {
   it("l'agence enregistre un jeton : stocké chiffré, jamais renvoyé", async () => {
     const key = testKey();
     const { call, raw } = setup({ TOKEN_ENCRYPTION_KEY: key });
-    const res = await call(`/clients/${A}/connections/meta/token`, { as: AGENCE, method: 'PUT', body: { token: 'EAAjeton-meta-de-test', externalId: 'act_1' } });
+    // Test de lecture Meta simulé : aucune requête réseau pendant les tests.
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      seen.push(`${init.method} ${url}`);
+      return new Response(JSON.stringify({ id: 'act_123456', name: 'Compte', currency: 'EUR', timezone_name: 'Europe/Paris', account_status: 1 }), { status: 200 });
+    });
+    const res = await call(`/clients/${A}/connections/meta/token`, { as: AGENCE, method: 'PUT', body: { token: 'EAAjeton-meta-de-test', externalId: 'act_123456' } });
+    vi.unstubAllGlobals();
     expect(res.status).toBe(200);
+    expect(((await res.clone().json()) as any).state).toBe('ok');
+    expect(seen).toEqual([expect.stringMatching(/^GET https:\/\/graph\.facebook\.com\/v[\d.]+\/act_123456\?fields=/)]);
+    expect(seen[0]).not.toContain('EAAjeton');
     expect(await res.text()).not.toContain('EAAjeton');
     const row = raw.prepare(`SELECT token_ciphertext FROM connections WHERE client_id = ? AND type = 'meta'`).get(A) as any;
     expect(row.token_ciphertext).not.toContain('EAAjeton');
@@ -36,7 +46,7 @@ describe('Saisie des jetons et synchronisation manuelle', () => {
 
   it('refusé au client, en vue client, et sans clé de chiffrement', async () => {
     const { call } = setup({ TOKEN_ENCRYPTION_KEY: testKey() });
-    const body = { token: 'EAAjeton-meta-de-test', externalId: 'act_1' };
+    const body = { token: 'EAAjeton-meta-de-test', externalId: 'act_123456' };
     expect((await call(`/clients/${A}/connections/meta/token`, { as: CLIENT_A, method: 'PUT', body })).status).toBe(403);
     expect((await call(`/clients/${A}/connections/meta/token`, { as: AGENCE, view: 'client', method: 'PUT', body })).status).toBe(403);
     const { call: call2 } = setup();
@@ -47,7 +57,7 @@ describe('Saisie des jetons et synchronisation manuelle', () => {
     const { call } = setup({ TOKEN_ENCRYPTION_KEY: testKey() });
     expect((await call(`/clients/${A}/sync`, { as: CLIENT_A, method: 'POST', body: {} })).status).toBe(403);
     const res = await call(`/clients/${A}/sync`, { as: AGENCE, method: 'POST', body: {} });
-    expect(res.status).toBe(502);
-    expect(((await res.json()) as any).error).toMatch(/Aucun jeton GHL/);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).error).toMatch(/Aucun jeton/);
   });
 });

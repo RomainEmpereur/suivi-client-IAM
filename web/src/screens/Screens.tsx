@@ -328,8 +328,13 @@ function AgencyConnectionTools({ clientId, knownIds }: { clientId: string; known
     setBusy(true); setMsg({ ok: true, text: 'Synchronisation en cours… (quelques secondes à une minute)' });
     try {
       const body = fromYearStart ? { from: `${new Date().getFullYear()}-01-01` } : {};
-      const r = await api<{ result: { opportunities: number; appointments: number } }>(`/clients/${clientId}/sync`, { method: 'POST', body: JSON.stringify(body) });
-      setMsg({ ok: true, text: `Synchronisation GHL terminée : ${r.result.opportunities} opportunités, ${r.result.appointments} rendez-vous lus.` });
+      type R = { ok: boolean; error?: string; opportunities?: number; appointments?: number; rows?: number; spendEurCents?: number; residualDays?: number };
+      const r = await api<{ ok: boolean; results: { meta?: R; ghl?: R } }>(`/clients/${clientId}/sync`, { method: 'POST', body: JSON.stringify(body) });
+      const parts: string[] = [];
+      const m = r.results.meta, g = r.results.ghl;
+      if (m) parts.push(m.ok ? `Meta : ${m.rows} lignes, ${formatEuros(m.spendEurCents ?? 0)} dépensés, rapprochés du total du compte` : `Meta en échec : ${m.error}`);
+      if (g) parts.push(g.ok ? `GHL : ${g.opportunities} opportunités, ${g.appointments} rendez-vous` : `GHL en échec : ${g.error}`);
+      setMsg({ ok: r.ok, text: `Synchronisation terminée. ${parts.join(' · ')}.` });
     } catch (x) {
       const m = (x as Error).message;
       setMsg({ ok: false, text: /^Erreur 5\d\d$/.test(m) ? `${m} : la synchronisation a été interrompue par Cloudflare (limite de calcul ?). Aucune donnée n'a été modifiée.` : m });
@@ -350,7 +355,7 @@ function AgencyConnectionTools({ clientId, knownIds }: { clientId: string; known
         <button class="btn" type="submit" disabled={busy}>Enregistrer et tester</button>
       </form>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn" onClick={() => sync(false)} disabled={busy}>↻ Synchroniser GHL maintenant (30 derniers jours)</button>
+        <button class="btn" onClick={() => sync(false)} disabled={busy}>↻ Synchroniser maintenant (Meta et GHL, 30 derniers jours)</button>
         <button class="ghost-btn" onClick={() => sync(true)} disabled={busy}>Reprendre l'historique depuis le 1er janvier</button>
         <span class="small muted">Synchronisation automatique chaque jour à 6 h (Paris).</span>
       </div>

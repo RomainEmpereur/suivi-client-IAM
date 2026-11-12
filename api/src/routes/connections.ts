@@ -6,7 +6,8 @@ import { audit, nowIso, run, first } from '../db.ts';
 import { HttpError } from '../errors.ts';
 import { encryptToken } from '../crypto.ts';
 import { createGhlClient, GhlError } from '../../../packages/ghl/src/index.ts';
-import { runGhlForClient } from '../../../jobs/sync-daily/src/run.ts';
+import { runGhlForClient, runMetaForClient } from '../../../jobs/sync-daily/src/run.ts';
+import { createMetaClient, MetaError } from '../../../packages/meta/src/index.ts';
 
 /**
  * Saisie des jetons (agence uniquement, §16) : chiffrés au repos, jamais renvoyés, testés à l'enregistrement.
@@ -34,6 +35,10 @@ connections.put('/:clientId/connections/:type/token', async (c) => {
   if (type === 'ghl') {
     try { await createGhlClient({ token, maxAttempts: 2 }).location(externalId); }
     catch (e) { state = 'casse'; error = e instanceof GhlError ? `Test refusé par GHL (HTTP ${e.status})` : 'Test impossible'; }
+  } else {
+    if (!/^(act_)?\d{5,20}$/.test(externalId)) throw new HttpError(400, 'Identifiant du compte publicitaire invalide (act_ suivi de chiffres).');
+    try { await createMetaClient({ token, maxAttempts: 2 }).adAccount(externalId); }
+    catch (e) { state = 'casse'; error = e instanceof MetaError ? `Test refusé par Meta (HTTP ${e.status}${e.code ? `, code ${e.code}` : ''})` : 'Test impossible'; }
   }
   const cipher = await encryptToken(token, c.env.TOKEN_ENCRYPTION_KEY);
   const now = nowIso();
@@ -52,10 +57,20 @@ connections.put('/:clientId/connections/:type/token', async (c) => {
 connections.post('/:clientId/sync', async (c) => {
   requireAgency(c);
   const client = c.get('client');
-  const body = await c.req.json<{ from?: string; to?: string }>().catch(() => ({} as Record<string, never>));
+  const body = await c.req.json<{ from?: string; to?: string; source?: string }>().catch(() => ({} as Record<string, never>));
   const YMD = /^\d{4}-\d{2}-\d{2}$/;
   if ((body.from && !YMD.test(body.from)) || (body.to && !YMD.test(body.to))) throw new HttpError(400, 'Dates invalides.');
-  const r = await runGhlForClient(c.env, client.id, { from: body.from, to: body.to });
-  if (!r.ok) throw new HttpError(502, r.error);
-  return c.json({ ok: true, result: r.result });
+  if (body.source && body.source !== 'meta' && body.source !== 'ghl') throw new HttpError(400, 'Source inconnue.');
+  const configured = await c.env.DB.prepare(`SELECT type FROM connections WHERE client_id = ?1 AND token_ciphertext IS NOT NULL AND type IN ('meta','ghl')`)
+    .bind(client.id).all<{ type: string }>();
+  const types = (configured.results ?? []).map((r) => r.type).filter((t) => !body.source || t === body.source).sort().reverse(); // meta puis ghl
+  if (types.length === 0) throw new HttpError(409, 'Aucun jeton enregistré pour ce client.');
+  const out: Record<string, unknown> = {};
+  for (const t of types) {
+    const r = t === 'meta'
+      ? await runMetaForClient(c.env, client.id, { from: body.from, to: body.to })
+      : await runGhlForClient(c.env, client.id, { from: body.from, to: body.to });
+    out[t] = r.ok ? { ok: true, ...r.result } : { ok: false, error: r.error };
+  }
+  return c.json({ ok: Object.values(out).every((r) => (r as { ok: boolean }).ok), results: out });
 });
