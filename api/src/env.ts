@@ -9,6 +9,8 @@ export interface Bindings {
   TOKEN_ENCRYPTION_KEY?: string;
   /** Secret Worker : clé de la génération automatique du delivery (routes /api/robot, décision 0009). */
   DELIVERY_ROBOT_TOKEN?: string;
+  /** Stockage des fichiers (R2) : PDF des guides, puis ressources et pièces jointes. Absent tant que R2 n'est pas activé. */
+  FILES?: R2Bucket;
 }
 
 export interface UserRow {

@@ -1,11 +1,11 @@
 import { useState } from 'preact/hooks';
 import { formatDate, formatDateTime } from '@obsidian/domain';
-import { ApiError, api, useApi } from '../api.ts';
+import { ApiError, api, openFile, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
 import { AgencyNote, EmptyState, ErrorBox, Loading, PageHead, Pill } from '../components/ui.tsx';
 import { renderMarkdown } from '../markdown.ts';
 
-interface GuideCard { id: string; title: string; kind: string; url: string | null; hasBody?: boolean; pinned: boolean; readAt: string | null; published?: boolean }
+interface GuideCard { id: string; title: string; kind: string; url: string | null; hasBody?: boolean; hasFile?: boolean; pinned: boolean; readAt: string | null; published?: boolean }
 const KIND: Record<string, string> = { pdf: 'PDF', video: 'Vidéo', page: 'Guide' };
 
 /** Grille des guides (§11) : communs à tous les clients, ou épinglés pour ce client. */
@@ -25,9 +25,11 @@ export function GuidesScreen({ clientId }: { clientId: string }) {
             <article id={g.id} class="card edge deliverable" style={{ '--edge': g.published === false ? 'var(--agency)' : 'var(--border)' }}>
               <div class="kpi-row"><span class="label">{KIND[g.kind] ?? g.kind}{g.pinned ? ' · pour vous' : ''}</span>{g.readAt && <Pill kind="neutral">Lu</Pill>}</div>
               <h3>{g.title}</h3>
-              {g.hasBody
-                ? <a class="btn" href={`/c/${clientId}/guides/${g.id}`}>Lire le guide</a>
-                : g.url && <a class="btn" href={g.url} target="_blank" rel="noopener noreferrer">Ouvrir ↗</a>}
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                {g.hasBody && <a class="btn" href={`/c/${clientId}/guides/${g.id}`}>Lire le guide</a>}
+                {g.hasFile && <button class={g.hasBody ? 'ghost-btn' : 'btn'} onClick={() => openFile(`/clients/${clientId}/guides/${g.id}/file`).catch((e) => alert(e.message))}>PDF</button>}
+                {!g.hasBody && !g.hasFile && g.url && <a class="btn" href={g.url} target="_blank" rel="noopener noreferrer">Ouvrir ↗</a>}
+              </div>
               {g.published === false && <AgencyNote>ce guide est en brouillon, il n'est pas visible par le client.</AgencyNote>}
             </article>
           ))}
@@ -39,7 +41,7 @@ export function GuidesScreen({ clientId }: { clientId: string }) {
 
 /** Lecture d'un guide rédigé. */
 export function GuideScreen({ clientId, guideId }: { clientId: string; guideId: string }) {
-  const { data, error, loading } = useApi<{ guide: { id: string; title: string; url: string | null; bodyMd: string | null; updatedAt: string; published?: boolean } }>(`/clients/${clientId}/guides/${guideId}`);
+  const { data, error, loading } = useApi<{ guide: { id: string; title: string; url: string | null; bodyMd: string | null; hasFile?: boolean; updatedAt: string; published?: boolean } }>(`/clients/${clientId}/guides/${guideId}`);
   const g = data?.guide;
   return (
     <>
@@ -49,7 +51,7 @@ export function GuideScreen({ clientId, guideId }: { clientId: string; guideId: 
       {g && (
         <>
           <PageHead a="Guide" b={g.title} sub={<span class="mono small muted">Mis à jour le {formatDate(g.updatedAt, { year: true })}</span>}
-            right={<div style="display:flex;gap:8px">{g.url && <a class="ghost-btn" href={g.url} target="_blank" rel="noopener noreferrer">Version vidéo / PDF ↗</a>}<button class="btn no-print" onClick={() => window.print()}>Imprimer</button></div>} />
+            right={<div style="display:flex;gap:8px">{g.hasFile && <button class="btn" onClick={() => openFile(`/clients/${clientId}/guides/${g.id}/file`).catch((e) => alert(e.message))}>Version PDF (avec captures)</button>}{g.url && <a class="ghost-btn" href={g.url} target="_blank" rel="noopener noreferrer">Version vidéo / PDF ↗</a>}<button class="btn no-print" onClick={() => window.print()}>Imprimer</button></div>} />
           {g.published === false && <div class="banner warn"><span>Brouillon : le client ne voit pas encore ce guide.</span></div>}
           {g.bodyMd ? <article class="card md-content guide" dangerouslySetInnerHTML={{ __html: renderMarkdown(g.bodyMd) }} /> : <EmptyState title="Guide sans contenu rédigé" />}
         </>
@@ -58,7 +60,7 @@ export function GuideScreen({ clientId, guideId }: { clientId: string; guideId: 
   );
 }
 
-interface AgencyGuide { id: string; clientId: string | null; title: string; kind: string; url: string | null; bodyMd: string | null; sortOrder: number; published: boolean; updatedAt: string }
+interface AgencyGuide { id: string; hasFile?: boolean; clientId: string | null; title: string; kind: string; url: string | null; bodyMd: string | null; sortOrder: number; published: boolean; updatedAt: string }
 
 /** Rédaction des guides (agence) : titre, contenu (markdown + captures en lien https), épinglage, ordre, publication. */
 export function AgencyGuidesScreen() {
@@ -79,7 +81,7 @@ export function AgencyGuidesScreen() {
           <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
             <div>
               <strong>{g.title}</strong>
-              <div class="small muted">{clientName(g.clientId)} · ordre {g.sortOrder} · modifié le {formatDateTime(g.updatedAt)}{g.bodyMd ? '' : g.url ? ' · lien externe' : ' · vide'}</div>
+              <div class="small muted">{clientName(g.clientId)} · ordre {g.sortOrder} · modifié le {formatDateTime(g.updatedAt)}{g.hasFile ? ' · PDF joint' : ''}{g.bodyMd ? '' : g.url ? ' · lien externe' : g.hasFile ? '' : ' · vide'}</div>
             </div>
             <span style="display:flex;gap:8px;align-items:center">
               {g.published ? <Pill kind="ok">Publié</Pill> : <Pill kind="neutral">Brouillon</Pill>}
@@ -130,6 +132,7 @@ function GuideEditor({ g, onClose, onSaved }: { g: AgencyGuide | null; onClose: 
         <label>Ordre <input type="number" value={sortOrder} style="width:70px" onInput={(e) => setSortOrder(Number((e.target as HTMLInputElement).value))} /></label>
         <input type="url" value={url} placeholder="Lien vidéo ou PDF (facultatif)" style="flex:1;min-width:220px" onInput={(e) => setUrl((e.target as HTMLInputElement).value)} aria-label="Lien" />
       </div>
+      {g && <PdfControls g={g} onChange={onSaved} />}
       <div style="display:flex;gap:6px">
         <button class={preview ? 'ghost-btn' : 'btn'} onClick={() => setPreview(false)}>Rédiger</button>
         <button class={preview ? 'btn' : 'ghost-btn'} onClick={() => setPreview(true)}>Aperçu</button>
@@ -148,6 +151,35 @@ function GuideEditor({ g, onClose, onSaved }: { g: AgencyGuide | null; onClose: 
         {g && <button class="ghost-btn" onClick={remove}>Supprimer</button>}
         {msg && <span class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }}>{msg.text}</span>}
       </div>
+    </div>
+  );
+}
+
+function PdfControls({ g, onChange }: { g: AgencyGuide; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    if (file.type !== 'application/pdf') { setMsg({ ok: false, text: 'Choisissez un fichier PDF.' }); return; }
+    setBusy(true); setMsg({ ok: true, text: 'Envoi du PDF…' });
+    try {
+      await api(`/agence/guides/${g.id}/file`, { method: 'PUT', body: file, headers: { 'Content-Type': 'application/pdf', 'X-File-Name': encodeURIComponent(file.name).slice(0, 100) } });
+      setMsg({ ok: true, text: 'PDF joint.' }); onChange();
+    } catch (x) { setMsg({ ok: false, text: (x as ApiError).message }); } finally { setBusy(false); }
+  }
+  async function remove() {
+    if (!confirm('Retirer le PDF de ce guide ?')) return;
+    try { await api(`/agence/guides/${g.id}/file`, { method: 'DELETE' }); setMsg({ ok: true, text: 'PDF retiré.' }); onChange(); } catch (x) { setMsg({ ok: false, text: (x as ApiError).message }); }
+  }
+  return (
+    <div class="small" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="label">PDF</span>
+      {g.hasFile ? <span>Un PDF est joint.</span> : <span class="muted">Aucun PDF joint.</span>}
+      <label class="ghost-btn" style="cursor:pointer">{g.hasFile ? 'Remplacer le PDF' : 'Joindre un PDF'}
+        <input type="file" accept="application/pdf" style="display:none" disabled={busy} onChange={(e) => upload((e.target as HTMLInputElement).files?.[0])} />
+      </label>
+      {g.hasFile && <button class="ghost-btn" onClick={remove}>Retirer</button>}
+      {msg && <span style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }}>{msg.text}</span>}
     </div>
   );
 }

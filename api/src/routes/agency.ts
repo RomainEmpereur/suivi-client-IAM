@@ -88,7 +88,8 @@ agency.get('/console', async (c) => {
 // ─── Guides (§11, §12 Édition) : communs ou épinglés pour un client ; brouillon / publié ─────
 
 interface GuideRow { id: string; client_id: string | null; title: string; kind: string; url: string | null; body_md: string | null; sort_order: number; published: number; updated_at: string }
-const serializeGuideAgency = (g: GuideRow) => ({
+const serializeGuideAgency = (g: GuideRow & { r2_key?: string | null }) => ({
+  hasFile: Boolean(g.r2_key),
   id: g.id, clientId: g.client_id, title: g.title, kind: g.kind, url: g.url, bodyMd: g.body_md, sortOrder: g.sort_order,
   published: Boolean(g.published), updatedAt: g.updated_at,
 });
@@ -163,5 +164,40 @@ agency.delete('/guides/:id', async (c) => {
     c.env.DB.prepare('DELETE FROM guides WHERE id = ?1').bind(g.id),
   ]);
   await audit(c.env.DB, { clientId: g.client_id, actorId: user.id, actorEmail: user.email, action: 'guide_supprime', objectType: 'guide', objectId: g.id, before: { title: g.title } });
+  return c.json({ ok: true });
+});
+
+// ─── Fichier PDF d'un guide (R2) ─────────────────────────────────────────────
+
+const MAX_PDF = 30 * 1024 * 1024;
+
+agency.put('/guides/:id/file', async (c) => {
+  const user = c.get('user');
+  if (!c.env.FILES) throw new HttpError(503, "Stockage de fichiers non activé (R2).");
+  const g = await first<GuideRow & { r2_key: string | null }>(c.env.DB, 'SELECT * FROM guides WHERE id = ?1', c.req.param('id'));
+  if (!g) throw notFound();
+  const type = (c.req.header('Content-Type') ?? '').split(';')[0].trim();
+  if (type !== 'application/pdf') throw new HttpError(400, 'Seuls les fichiers PDF sont acceptés.');
+  const len = Number(c.req.header('Content-Length') ?? 0);
+  if (len > MAX_PDF) throw new HttpError(413, 'Fichier trop lourd (30 Mo au plus).');
+  const buf = await c.req.arrayBuffer();
+  if (!buf.byteLength || buf.byteLength > MAX_PDF) throw new HttpError(buf.byteLength ? 413 : 400, buf.byteLength ? 'Fichier trop lourd (30 Mo au plus).' : 'Fichier vide.');
+  if (new TextDecoder().decode(new Uint8Array(buf.slice(0, 5))) !== '%PDF-') throw new HttpError(400, "Ce fichier n'est pas un PDF.");
+  const name = (c.req.header('X-File-Name') ?? 'guide.pdf').replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+  const key = `guides/${g.id}/${Date.now()}.pdf`;
+  await c.env.FILES.put(key, buf, { httpMetadata: { contentType: 'application/pdf', contentDisposition: `inline; filename="${name}"` } });
+  await c.env.DB.prepare('UPDATE guides SET r2_key = ?1, updated_at = ?2 WHERE id = ?3').bind(key, nowIso(), g.id).run();
+  if (g.r2_key) await c.env.FILES.delete(g.r2_key).catch(() => {});
+  await audit(c.env.DB, { clientId: g.client_id, actorId: user.id, actorEmail: user.email, action: 'guide_pdf_depose', objectType: 'guide', objectId: g.id, after: { bytes: buf.byteLength } });
+  return c.json({ ok: true, bytes: buf.byteLength });
+});
+
+agency.delete('/guides/:id/file', async (c) => {
+  const user = c.get('user');
+  const g = await first<GuideRow & { r2_key: string | null }>(c.env.DB, 'SELECT * FROM guides WHERE id = ?1', c.req.param('id'));
+  if (!g) throw notFound();
+  if (g.r2_key && c.env.FILES) await c.env.FILES.delete(g.r2_key).catch(() => {});
+  await c.env.DB.prepare('UPDATE guides SET r2_key = NULL, updated_at = ?1 WHERE id = ?2').bind(nowIso(), g.id).run();
+  await audit(c.env.DB, { clientId: g.client_id, actorId: user.id, actorEmail: user.email, action: 'guide_pdf_retire', objectType: 'guide', objectId: g.id });
   return c.json({ ok: true });
 });

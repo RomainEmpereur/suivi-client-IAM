@@ -320,14 +320,32 @@ clients.get('/:clientId/guides', async (c) => {
 clients.get('/:clientId/guides/:guideId', async (c) => {
   const client = c.get('client');
   const view = c.get('view');
-  const g = await first<{ id: string; client_id: string | null; title: string; kind: string; url: string | null; body_md: string | null; published: number; updated_at: string }>(c.env.DB,
-    'SELECT id, client_id, title, kind, url, body_md, published, updated_at FROM guides WHERE id = ?1 AND (client_id IS NULL OR client_id = ?2)', c.req.param('guideId'), client.id);
+  const g = await first<{ id: string; client_id: string | null; title: string; kind: string; url: string | null; body_md: string | null; r2_key: string | null; published: number; updated_at: string }>(c.env.DB,
+    'SELECT id, client_id, title, kind, url, body_md, r2_key, published, updated_at FROM guides WHERE id = ?1 AND (client_id IS NULL OR client_id = ?2)', c.req.param('guideId'), client.id);
   if (!g || (view === 'client' && !g.published)) throw notFound();
   if (c.get('user').role === 'client') {
     await run(c.env.DB, `INSERT INTO guide_reads (client_id, guide_id, read_at) VALUES (?1, ?2, ?3) ON CONFLICT (client_id, guide_id) DO NOTHING`, client.id, g.id, nowIso());
   }
-  return c.json({ guide: { id: g.id, title: g.title, kind: g.kind, url: g.url, bodyMd: g.body_md, updatedAt: g.updated_at, pinned: g.client_id !== null,
+  return c.json({ guide: { id: g.id, title: g.title, kind: g.kind, url: g.url, bodyMd: g.body_md, hasFile: Boolean(g.r2_key), updatedAt: g.updated_at, pinned: g.client_id !== null,
     ...(view === 'agence' ? { published: Boolean(g.published) } : {}) } });
+});
+
+/** PDF d'un guide (R2), mêmes règles d'accès que la lecture du guide. */
+clients.get('/:clientId/guides/:guideId/file', async (c) => {
+  const client = c.get('client');
+  const g = await first<{ id: string; r2_key: string | null; published: number }>(c.env.DB,
+    'SELECT id, r2_key, published FROM guides WHERE id = ?1 AND (client_id IS NULL OR client_id = ?2)', c.req.param('guideId'), client.id);
+  if (!g || !g.r2_key || (c.get('view') === 'client' && !g.published)) throw notFound();
+  if (!c.env.FILES) throw new HttpError(503, 'Stockage de fichiers non activé.');
+  const obj = await c.env.FILES.get(g.r2_key);
+  if (!obj) throw notFound();
+  if (c.get('user').role === 'client') {
+    await run(c.env.DB, `INSERT INTO guide_reads (client_id, guide_id, read_at) VALUES (?1, ?2, ?3) ON CONFLICT (client_id, guide_id) DO NOTHING`, client.id, g.id, nowIso());
+  }
+  return new Response(obj.body, { headers: {
+    'content-type': 'application/pdf', 'content-disposition': obj.httpMetadata?.contentDisposition ?? 'inline',
+    'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
+  } });
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

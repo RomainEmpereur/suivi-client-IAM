@@ -36,3 +36,52 @@ describe('Guides', () => {
     expect((await call('/agence/guides', { as: AGENCE, method: 'POST', body: { title: 'x', clientId: 'cl_inconnu' } })).status).toBe(400);
   });
 });
+
+/** Faux R2 en mémoire (put / get / delete). */
+function fakeR2() {
+  const m = new Map<string, { body: ArrayBuffer; meta: any }>();
+  return {
+    map: m,
+    put: async (k: string, v: ArrayBuffer, o: any) => { m.set(k, { body: v, meta: o?.httpMetadata }); },
+    get: async (k: string) => { const x = m.get(k); return x ? { body: new Blob([x.body]).stream(), httpMetadata: x.meta } : null; },
+    delete: async (k: string) => { m.delete(k); },
+  };
+}
+const pdf = new TextEncoder().encode('%PDF-1.4\n% faux PDF de test\n%%EOF');
+
+describe('Guides : PDF (R2)', () => {
+  it("l'agence joint un PDF ; le client publié le télécharge ; un brouillon reste inaccessible", async () => {
+    const r2 = fakeR2();
+    const { call, env } = setup();
+    (env as any).FILES = r2;
+    const { id } = (await (await call('/agence/guides', { as: AGENCE, method: 'POST', body: { title: 'Setup Meta' } })).json()) as any;
+    // Envoi brut : la fonction call de test ne gère que le JSON, on passe par app.request directement.
+    const send = async (body: Uint8Array, type: string) => (await import('../api/src/index.ts')).default.request(`/api/agence/guides/${id}/file`,
+      { method: 'PUT', headers: { 'X-Dev-User': AGENCE, 'Content-Type': type, 'X-File-Name': 'setup.pdf' }, body }, env);
+    expect((await send(new TextEncoder().encode('pas un pdf'), 'application/pdf')).status).toBe(400);
+    expect((await send(pdf, 'image/png')).status).toBe(400);
+    expect((await send(pdf, 'application/pdf')).status).toBe(200);
+    expect(r2.map.size).toBe(1);
+    expect((await call(`/clients/${A}/guides/${id}/file`, { as: CLIENT_A })).status).toBe(404); // brouillon
+    await call(`/agence/guides/${id}`, { as: AGENCE, method: 'PATCH', body: { published: true } });
+    const dl = await call(`/clients/${A}/guides/${id}/file`, { as: CLIENT_A });
+    expect(dl.status).toBe(200);
+    expect(dl.headers.get('content-type')).toBe('application/pdf');
+    expect(new TextDecoder().decode(new Uint8Array(await dl.arrayBuffer()))).toContain('%PDF-1.4');
+    // Remplacement : l'ancien fichier est supprimé.
+    expect((await send(pdf, 'application/pdf')).status).toBe(200);
+    expect(r2.map.size).toBe(1);
+    expect((await call(`/agence/guides/${id}/file`, { as: AGENCE, method: 'DELETE' })).status).toBe(200);
+    expect(r2.map.size).toBe(0);
+    expect((await call(`/clients/${A}/guides/${id}/file`, { as: CLIENT_A })).status).toBe(404);
+  });
+
+  it('sans R2 activé, le dépôt répond clairement', async () => {
+    const { env } = setup();
+    const { default: app } = await import('../api/src/index.ts');
+    const r = await app.request('/api/agence/guides', { method: 'POST', headers: { 'X-Dev-User': AGENCE, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'x' }) }, env);
+    const { id } = (await r.json()) as any;
+    const up = await app.request(`/api/agence/guides/${id}/file`, { method: 'PUT', headers: { 'X-Dev-User': AGENCE, 'Content-Type': 'application/pdf' }, body: pdf }, env);
+    expect(up.status).toBe(503);
+  });
+});
