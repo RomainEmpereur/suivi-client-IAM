@@ -61,3 +61,7 @@ migrations_dir = "../db/migrations"
 # Synchronisation quotidienne (§13) : 4 h et 5 h UTC ; le Worker ne travaille que s'il est 6 h à Paris (été comme hiver).
 [env.production.triggers]
 crons = ["0 4 * * *", "0 5 * * *"]
+
+# Journaux du Worker (messages d'erreur sans jeton ni donnée personnelle), consultables dans le tableau de bord Cloudflare.
+[env.production.observability]
+enabled = true

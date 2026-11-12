@@ -3,7 +3,7 @@ import {
   DELIVERABLE_STATUS_LABEL, DELIVERABLE_TYPE_LABEL, PHASE_STATE_LABEL, formatDate, formatDateTime, formatEuros, formatInt,
   type AppointmentCounter, type DeliverableStatus, type PhaseState,
 } from '@obsidian/domain';
-import { api, useApi } from '../api.ts';
+import { ApiError, api, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
 import { Counter } from '../components/Counter.tsx';
 import { CONNECTION_LABEL, type ClientOverview } from '../components/ClientAlerts.tsx';
@@ -324,21 +324,53 @@ function AgencyConnectionTools({ clientId, knownIds, onDone }: { clientId: strin
       setMsg(r.state === 'ok' ? { ok: true, text: 'Jeton enregistré (chiffré) et connexion testée.' } : { ok: false, text: `Jeton enregistré, mais le test a échoué : ${r.error}` });
     } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); onDone(); }
   }
-  async function sync(fromYearStart = false) {
+  type R = { ok: boolean; error?: string; opportunities?: number; appointments?: number; rows?: number; spendEurCents?: number; residualDays?: number };
+  const call = (body: Record<string, string>) =>
+    api<{ ok: boolean; results: { meta?: R; ghl?: R } }>(`/clients/${clientId}/sync`, { method: 'POST', body: JSON.stringify(body) });
+  const describe = (m?: R, g?: R) => [
+    m && (m.ok ? `Meta : ${m.rows} lignes, ${formatEuros(m.spendEurCents ?? 0)} dépensés, rapprochés du total du compte` : `Meta en échec : ${m.error}`),
+    g && (g.ok ? `GHL : ${g.opportunities} opportunités, ${g.appointments} rendez-vous` : `GHL en échec : ${g.error}`),
+  ].filter(Boolean).join(' · ');
+  const failText = (x: unknown) => {
+    const m = (x as Error).message;
+    return /^Erreur 5\d\d$/.test(m) ? `${m} : la synchronisation a été interrompue par Cloudflare. La tranche en cours n'a pas été modifiée.` : m;
+  };
+  async function sync() {
     setBusy(true); setMsg({ ok: true, text: 'Synchronisation en cours… (quelques secondes à une minute)' });
     try {
-      const body = fromYearStart ? { from: `${new Date().getFullYear()}-01-01` } : {};
-      type R = { ok: boolean; error?: string; opportunities?: number; appointments?: number; rows?: number; spendEurCents?: number; residualDays?: number };
-      const r = await api<{ ok: boolean; results: { meta?: R; ghl?: R } }>(`/clients/${clientId}/sync`, { method: 'POST', body: JSON.stringify(body) });
-      const parts: string[] = [];
-      const m = r.results.meta, g = r.results.ghl;
-      if (m) parts.push(m.ok ? `Meta : ${m.rows} lignes, ${formatEuros(m.spendEurCents ?? 0)} dépensés, rapprochés du total du compte` : `Meta en échec : ${m.error}`);
-      if (g) parts.push(g.ok ? `GHL : ${g.opportunities} opportunités, ${g.appointments} rendez-vous` : `GHL en échec : ${g.error}`);
-      setMsg({ ok: r.ok, text: `Synchronisation terminée. ${parts.join(' · ')}.` });
-    } catch (x) {
-      const m = (x as Error).message;
-      setMsg({ ok: false, text: /^Erreur 5\d\d$/.test(m) ? `${m} : la synchronisation a été interrompue par Cloudflare (limite de calcul ?). Aucune donnée n'a été modifiée.` : m });
-    } finally { setBusy(false); onDone(); }
+      const r = await call({});
+      setMsg({ ok: r.ok, text: `Synchronisation terminée. ${describe(r.results.meta, r.results.ghl)}.` });
+    } catch (x) { setMsg({ ok: false, text: failText(x) }); } finally { setBusy(false); onDone(); }
+  }
+  /** Reprise d'historique : Meta mois par mois (une requête courte par mois), puis GHL sur toute la période. */
+  async function syncHistory() {
+    setBusy(true);
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const start = `${yesterday.slice(0, 4)}-01-01`;
+    let rows = 0, spend = 0, months = 0;
+    const done: string[] = [];
+    try {
+      for (let m = 0; m < 12; m++) {
+        const from = `${start.slice(0, 4)}-${String(m + 1).padStart(2, '0')}-01`;
+        if (from > yesterday) break;
+        const last = new Date(Date.UTC(Number(start.slice(0, 4)), m + 1, 0)).toISOString().slice(0, 10);
+        const to = last < yesterday ? last : yesterday;
+        setMsg({ ok: true, text: `Meta : reprise du mois ${m + 1}… (${months} mois faits)` });
+        let r;
+        try { r = await call({ from, to, source: 'meta' }); }
+        catch (x) { if ((x as ApiError).status === 409) break; throw x; } // pas de jeton Meta
+        const res = r.results.meta!;
+        if (!res.ok) { setMsg({ ok: false, text: `Meta en échec sur ${from} → ${to} : ${res.error}. Les mois précédents sont repris.` }); return; }
+        rows += res.rows ?? 0; spend += res.spendEurCents ?? 0; months++;
+      }
+      if (months) done.push(`Meta : ${months} mois, ${rows} lignes, ${formatEuros(spend)} dépensés, rapprochés du total du compte chaque jour`);
+      setMsg({ ok: true, text: 'GHL : reprise de la période…' });
+      try {
+        const g = await call({ from: start, source: 'ghl' });
+        done.push(describe(undefined, g.results.ghl));
+      } catch (x) { if ((x as ApiError).status !== 409) throw x; }
+      setMsg({ ok: true, text: done.length ? `Historique repris. ${done.join(' · ')}.` : 'Aucun jeton enregistré pour ce client.' });
+    } catch (x) { setMsg({ ok: false, text: failText(x) }); } finally { setBusy(false); onDone(); }
   }
   return (
     <div class="section card" style="border-color:var(--agency);display:flex;flex-direction:column;gap:10px">
@@ -355,8 +387,8 @@ function AgencyConnectionTools({ clientId, knownIds, onDone }: { clientId: strin
         <button class="btn" type="submit" disabled={busy}>Enregistrer et tester</button>
       </form>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn" onClick={() => sync(false)} disabled={busy}>↻ Synchroniser maintenant (Meta et GHL, 30 derniers jours)</button>
-        <button class="ghost-btn" onClick={() => sync(true)} disabled={busy}>Reprendre l'historique depuis le 1er janvier</button>
+        <button class="btn" onClick={() => sync()} disabled={busy}>↻ Synchroniser maintenant (Meta et GHL, 30 derniers jours)</button>
+        <button class="ghost-btn" onClick={() => syncHistory()} disabled={busy}>Reprendre l'historique depuis le 1er janvier</button>
         <span class="small muted">Synchronisation automatique chaque jour à 6 h (Paris).</span>
       </div>
       {msg && <div class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }} role="status">{msg.text}</div>}
