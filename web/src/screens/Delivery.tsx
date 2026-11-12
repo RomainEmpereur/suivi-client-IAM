@@ -3,6 +3,7 @@ import { formatDate, formatDateTime } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { AgencyNote, ErrorBox, Loading, PageHead, Pill } from '../components/ui.tsx';
 import { renderMarkdown } from '../markdown.ts';
+import { HtmlViewerButtons } from '../components/HtmlViewer.tsx';
 
 interface Step {
   key: string; label: string; recurring: boolean; needsMechanism: boolean; deliverable: string | null;
@@ -175,7 +176,10 @@ function StepCard({ clientId, step, mechanism, onChange }: { clientId: string; s
 
           {hasText && !editing && (
             <>
-              <button class="ghost-btn" style="align-self:flex-start" onClick={() => setOpen(!open)}>{open ? 'Replier' : 'Lire la pièce'}</button>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-self:flex-start">
+                <button class="ghost-btn" onClick={() => setOpen(!open)}>{open ? 'Replier' : 'Lire la pièce'}</button>
+                <HtmlViewerButtons md={step.contentMd!} title={step.label} />
+              </div>
               {open && <div class="md-content card" style="max-height:640px;overflow:auto" dangerouslySetInnerHTML={{ __html: renderMarkdown(step.contentMd!) }} />}
             </>
           )}

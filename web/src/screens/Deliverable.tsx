@@ -2,6 +2,7 @@ import { DELIVERABLE_STATUS_LABEL, DELIVERABLE_TYPE_LABEL, formatDate } from '@o
 import { useApi } from '../api.ts';
 import { EmptyState, ErrorBox, Loading, PageHead, Pill } from '../components/ui.tsx';
 import { renderMarkdown } from '../markdown.ts';
+import { HtmlViewerButtons } from '../components/HtmlViewer.tsx';
 
 interface Data {
   deliverable: { id: string; type: string; title: string; status: string; version?: number; publishedAt?: string | null; externalUrl?: string | null; published: boolean };
@@ -26,6 +27,7 @@ export function DeliverableScreen({ clientId, deliverableId }: { clientId: strin
               {d.publishedAt && <span class="mono small muted">Publié le {formatDate(d.publishedAt, { year: true })}</span>}
             </span>}
             right={d.externalUrl ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">Ouvrir le document ↗</a> : undefined} />
+          {data!.contentMd && <div class="section" style="display:flex;gap:8px;flex-wrap:wrap"><HtmlViewerButtons md={data!.contentMd} title={d.title} /></div>}
           {data!.contentMd
             ? <article class="card md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(data!.contentMd) }} />
             : <EmptyState title="Contenu disponible à la publication">Ce livrable est en préparation.</EmptyState>}

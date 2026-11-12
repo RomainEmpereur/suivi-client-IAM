@@ -108,3 +108,18 @@ export function renderMarkdown(md: string): string {
   }
   return out.join('\n');
 }
+
+/** Pages HTML livrées dans un contenu markdown (blocs ```html), pour le visualiseur plein écran. */
+export function extractHtmlBlocks(md: string): { kind: 'video' | 'page'; src: string }[] {
+  const out: { kind: 'video' | 'page'; src: string }[] = [];
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*```\s*html\s*([\w-]*)\s*$/i);
+    if (!m) continue;
+    const code: string[] = [];
+    i++;
+    while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
+    out.push({ kind: m[1].toLowerCase() === 'video' ? 'video' : 'page', src: code.join('\n') });
+  }
+  return out;
+}

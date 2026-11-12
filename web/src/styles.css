@@ -352,3 +352,9 @@ tr.row-alert td { background: var(--alert-soft); }
 .html-preview.page iframe { height: 80vh; min-height: 560px; }
 .html-preview details { margin-top: 6px; font-size: 13px; }
 .html-preview summary { cursor: pointer; color: var(--text-2); }
+/* Visualiseur plein écran des pages livrées */
+.html-viewer { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; flex-direction: column; }
+.html-viewer-bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.html-viewer-stage { flex: 1; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 16px; background: var(--surface-2); }
+.html-viewer-stage iframe { border: 1px solid var(--border); border-radius: 8px; background: #fff; height: 100%; min-height: 600px; transition: width .2s ease; }
+.html-viewer-stage iframe.video { aspect-ratio: 16 / 9; height: auto; min-height: 0; align-self: center; }
