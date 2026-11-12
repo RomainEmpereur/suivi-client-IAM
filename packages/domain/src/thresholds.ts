@@ -10,13 +10,17 @@ export interface Thresholds {
   cost_per_booked_max_cents: number | null;
 }
 
+/**
+ * Seuils par défaut (décision 0012) : larges, adaptés au B2B et aux campagnes de lancement,
+ * dont les premiers chiffres sont peu fiables. Un client peut avoir ses propres seuils (clients.thresholds_json).
+ */
 export const DEFAULT_THRESHOLDS: Thresholds = {
-  cpm_max_cents: 1500,
-  cpc_max_cents: 100,
-  ctr_min: 0.015,
-  thruplay_min: 0.12,
-  cancel_rate_max: 0.15,
-  roas_cash_min: 3,
+  cpm_max_cents: 4000,      // 40 € : un CPM B2B de 25 à 40 € est courant
+  cpc_max_cents: 300,       // 3 €
+  ctr_min: 0.007,           // 0,7 %
+  thruplay_min: 0.08,       // 8 %
+  cancel_rate_max: 0.25,    // 25 %
+  roas_cash_min: 1,         // au lancement, rentrer dans ses frais suffit
   cost_per_booked_max_cents: null,
 };
 
@@ -49,13 +53,13 @@ export const VERDICT_LABEL: Record<Verdict, string> = {
   non_mesure: 'Non mesuré',
 };
 
-/** Verdict simple : tenu / à surveiller (écart ≤ 20 %) / à corriger. */
+/** Verdict simple : tenu / à surveiller (écart ≤ 30 %, lancement B2B) / à corriger. */
 export function verdict(value: number | null, limit: number | null, kind: 'max' | 'min'): Verdict {
   if (value === null || limit === null) return 'non_mesure';
   const ok = kind === 'max' ? value <= limit : value >= limit;
   if (ok) return 'tenu';
   const gap = kind === 'max' ? (value - limit) / limit : (limit - value) / limit;
-  return gap <= 0.2 ? 'surveiller' : 'corriger';
+  return gap <= 0.3 ? 'surveiller' : 'corriger';
 }
 
 /** Seuils effectifs : surcharges du client, et à défaut, plafond calculé depuis les chiffres unitaires. */

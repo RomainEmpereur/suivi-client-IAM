@@ -3,7 +3,6 @@ import {
   DASH, addDaysYmd, delta, todayParis, formatDate, formatEuros, formatInt, formatPercent, verdict, type AppointmentCounter, type Thresholds, type Totals,
 } from '@obsidian/domain';
 import { useApi } from '../api.ts';
-import { Counter } from '../components/Counter.tsx';
 import { ClientAlerts, type ClientOverview } from '../components/ClientAlerts.tsx';
 import {
   DataTable, DualBarChart, EmptyState, ErrorBox, HBars, KpiCard, Loading, PageHead, SectionTitle, Segmented,
@@ -78,7 +77,6 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
 
       {data && (
         <>
-          {data.counter.windowStart && <Counter clientId={clientId} counter={data.counter} />}
 
           <div class="section">
             <div class="label" style="margin-bottom:8px">
@@ -88,10 +86,10 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
               <KpiCard label="Dépense publicitaire" value={formatEuros(val('spend_cents'))} missingReason={NO_DATA} delta={d('spend_cents')} sub={dv && `CPM ${formatEuros(dv.cpm_cents, { decimals: true })}`} edge="var(--accent)" />
               <KpiCard label="Leads Meta" value={formatInt(val('leads'))} missingReason={NO_DATA} delta={d('leads')} sub={dv && `Coût par lead ${formatEuros(dv.cost_per_lead_cents, { decimals: true })}`} />
               <KpiCard label="Clics sur le lien" value={formatInt(val('link_clicks'))} missingReason={NO_DATA} delta={d('link_clicks')} sub={dv && `CTR ${formatPercent(dv.ctr, 2)}`} />
-              <KpiCard label="Nouveaux contacts CRM" value={formatInt(val('crm_contacts'))} missingReason={NO_DATA} delta={d('crm_contacts')} />
+              <KpiCard label="Nouveaux contacts CRM" value={formatInt(val('crm_contacts'))} missingReason={reason('crm_contacts')} delta={d('crm_contacts')} />
               <KpiCard
-                label="Rendez-vous pris" value={formatInt(val('appointments_booked'))} missingReason={NO_DATA} delta={d('appointments_booked')}
-                verdict={dv ? verdict(dv.cost_per_booked_cents, ceiling, 'max') : undefined}
+                label="Rendez-vous pris" value={formatInt(val('appointments_booked'))} missingReason={reason('appointments_booked')} delta={d('appointments_booked')}
+                verdict={dv && ceiling != null && dv.cost_per_booked_cents != null && !um.has('appointments_booked') ? verdict(dv.cost_per_booked_cents, ceiling, 'max') : undefined}
                 sub={dv && <>Coût par RDV {formatEuros(dv.cost_per_booked_cents, { decimals: true })}{ceiling ? <> · plafond {formatEuros(ceiling, { decimals: true })}</> : null}</>}
               />
             </div>
@@ -123,11 +121,13 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
                 </div>
                 <div class="card">
                   <div class="label" style="margin-bottom:10px">Nouveaux contacts et rendez-vous pris, par jour</div>
-                  <DualBarChart
+                  {um.has('crm_contacts') && um.has('appointments_booked') ? (
+                    <p class="muted small" style="margin:24px 0">— Non synchronisé pour ce client : les contacts et rendez-vous apparaîtront ici dès que le CRM sera relié.</p>
+                  ) : <DualBarChart
                     data={data.series.map((s) => ({ date: s.date, a: s.crm_contacts, b: s.appointments_booked }))}
                     a={{ label: 'Contacts', format: formatInt }}
                     b={{ label: 'Rendez-vous', format: formatInt }}
-                  />
+                  />}
                 </div>
               </div>
 

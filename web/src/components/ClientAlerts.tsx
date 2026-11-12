@@ -36,7 +36,7 @@ export function ClientAlerts({ clientId, overview }: { clientId: string; overvie
           <span class="mono small">échéance dépassée : {formatDate(t.due_date)}</span>
         </a>
       ))}
-      {overview.progress && !overview.client.campaignsLaunchedAt && (
+      {overview.progress && !overview.client.campaignsLaunchedAt && overview.client.status !== 'actif' && (
         <a class="banner accent" href={`/c/${clientId}/infrastructure`}>
           <span>
             <strong>{overview.progress.label} en cours</strong> · {overview.progress.done}/{overview.progress.total}

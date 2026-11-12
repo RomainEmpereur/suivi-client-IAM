@@ -56,3 +56,22 @@ describe('Gestion des rendez-vous', () => {
     expect((await call(`/clients/${B}/appointments`, { as: CLIENT_A, method: 'POST', body: { contactName: 'X', scheduledAt: '2026-11-20T10:00:00Z' } })).status).toBe(404);
   });
 });
+
+describe('Rendez-vous saisis à la main : comptés dans les chiffres', () => {
+  it('un rendez-vous ajouté par le client apparaît dans les rendez-vous pris, puis tenus ; la synchro GHL ne les efface pas', async () => {
+    const { setup, B, CLIENT_B, AGENCE } = await import('./helpers/app.ts');
+    const { call, raw } = setup();
+    raw.prepare(`UPDATE clients SET unmeasured_json = '["appointments_booked","appointments_held"]' WHERE id = ?`).run(B);
+    const past = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const r = await call(`/clients/${B}/appointments`, { as: CLIENT_B, method: 'POST', body: { contactName: 'Prospect hors CRM', scheduledAt: past } });
+    expect(r.status).toBe(201);
+    const { id } = (await r.json()) as any;
+    const row = () => raw.prepare(`SELECT appointments_booked b, appointments_held h, source FROM metrics_daily WHERE client_id = ? AND ad_id = 'saisie_manuelle'`).get(B) as any;
+    expect(row()).toMatchObject({ b: 1, h: 0, source: 'manuel' });
+    expect(JSON.parse((raw.prepare('SELECT unmeasured_json u FROM clients WHERE id = ?').get(B) as any).u)).toEqual([]);
+    await call(`/clients/${B}/appointments/${id}`, { as: AGENCE, method: 'PATCH', body: { status: 'honore' } });
+    expect(row()).toMatchObject({ b: 1, h: 1 });
+    const rollup = raw.prepare(`SELECT SUM(appointments_booked) b FROM metrics_rollup WHERE client_id = ? AND level = 'campaign' AND entity_id = 'saisie_manuelle'`).get(B) as any;
+    expect(rollup.b).toBe(1);
+  });
+});

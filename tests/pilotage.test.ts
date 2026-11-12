@@ -21,9 +21,10 @@ describe('Pilotage : calculs', () => {
     const by = Object.fromEntries(k.map((x) => [x.key, x]));
     expect(k).toHaveLength(16);
     expect(by.cost_per_booked_cents).toMatchObject({ value: 20000, verdict: 'corriger' });
-    expect(by.ctr).toMatchObject({ value: 0.01, verdict: 'corriger' });
-    expect(by.cpm_cents).toMatchObject({ value: 2000, verdict: 'corriger' });
-    expect(by.cancel_rate).toMatchObject({ value: 0.2, verdict: 'corriger' });
+    // Seuils larges B2B lancement (décision 0012) : CTR 1 % ≥ 0,7 % et CPM 20 € ≤ 40 € sont tenus.
+    expect(by.ctr).toMatchObject({ value: 0.01, verdict: 'tenu' });
+    expect(by.cpm_cents).toMatchObject({ value: 2000, verdict: 'tenu' });
+    expect(by.cancel_rate).toMatchObject({ value: 0.2, verdict: 'tenu' });
     expect(by.sales).toMatchObject({ value: null, reason: 'Non synchronisé pour ce client' });
     expect(by.roas_cash).toMatchObject({ value: null, verdict: 'non_mesure' });
     expect(by.vsl_views.value).toBeNull();

@@ -129,7 +129,7 @@ export async function syncGhl(
   statements.unshift(db.prepare(
     `UPDATE metrics_daily SET crm_contacts = 0, appointments_booked = 0, appointments_held = 0, sales = 0,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-     WHERE client_id = ?1 AND date BETWEEN ?2 AND ?3`).bind(clientId, window.from, window.to));
+     WHERE client_id = ?1 AND date BETWEEN ?2 AND ?3 AND source != 'manuel'`).bind(clientId, window.from, window.to));
   for (const a of agg.values()) {
     statements.push(db.prepare(
       `INSERT INTO metrics_daily (client_id, date, ad_id, campaign_id, adset_id, campaign_name, crm_contacts, appointments_booked, appointments_held, sales, source)

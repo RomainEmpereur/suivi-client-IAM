@@ -3,6 +3,7 @@ import type { AppEnv } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { scopeClient } from '../scope.ts';
 import { audit, first, newId, nowIso, run } from '../db.ts';
+import { refreshManualAppointments } from '../manual-appointments.ts';
 import { HttpError, notFound } from '../errors.ts';
 
 /**
@@ -48,6 +49,7 @@ appointments.patch('/:clientId/appointments/:appointmentId', async (c) => {
        status_source = 'agence', status_updated_at = ?4, status_updated_by = ?5, updated_at = ?4
      WHERE id = ?6 AND client_id = ?7`,
     status, counts ? 1 : 0, reason, now, user.id, appt.id, client.id);
+  await refreshManualAppointments(c.env.DB, client.id);
   await audit(c.env.DB, {
     clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'rdv_statut', objectType: 'appointment', objectId: appt.id,
     before: { status: appt.status, counts_toward_target: appt.counts_toward_target, exclusion_reason: appt.exclusion_reason },
@@ -71,6 +73,7 @@ appointments.post('/:clientId/appointments', async (c) => {
     `INSERT INTO appointments (id, client_id, contact_name, booked_at, scheduled_at, status, origin, created_by_user_id, status_source)
      VALUES (?1, ?2, ?3, ?4, ?5, 'prevu', 'saisie', ?6, ?7)`,
     id, client.id, name, now, new Date(t).toISOString(), user.id, user.role === 'agence' ? 'agence' : 'client');
+  await refreshManualAppointments(c.env.DB, client.id);
   await audit(c.env.DB, {
     clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'rdv_ajout', objectType: 'appointment', objectId: id,
     after: { scheduled_at: new Date(t).toISOString(), origin: 'saisie' },

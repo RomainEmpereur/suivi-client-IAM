@@ -5,7 +5,6 @@ import {
 } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
-import { Counter } from '../components/Counter.tsx';
 import { CONNECTION_LABEL, type ClientOverview } from '../components/ClientAlerts.tsx';
 import {
   AgencyNote, DataTable, EmptyState, ErrorBox, Loading, PageHead, Pill, SEVERITY_EDGE, SEVERITY_LABEL, SectionTitle, Segmented,
@@ -430,25 +429,16 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
       reload();
     } catch (e) { setErr((e as Error).message); }
   }
-  function toggleCount(a: ApptItem) {
-    if (a.counts_toward_target) {
-      const reason = prompt('Motif de l\'exclusion du compteur (ex. hors cible, doublon, test) :');
-      if (!reason?.trim()) return;
-      patch(a, { countsTowardTarget: false, exclusionReason: reason.trim() });
-    } else patch(a, { countsTowardTarget: true });
-  }
-
   return (
     <>
-      <PageHead a="Rendez-vous" b="datés" lastSync={lastSync} sub="La liste qui fonde le compteur contractuel. C'est la seule page nominative de l'espace." />
+      <PageHead a="Rendez-vous" b="datés" lastSync={lastSync} sub="Tous vos rendez-vous : ceux réservés dans le CRM et ceux ajoutés à la main (réservés ailleurs). C'est la seule page nominative de l'espace." />
       {error && <ErrorBox error={error} />}
       {err && <div class="banner alert" role="alert">{err}</div>}
       {data && (
         <>
-          {data.counter.windowStart && <Counter clientId={clientId} counter={data.counter} />}
           {missingCount > 0 && (
             <div class="banner warn">
-              <span><strong>{missingCount} rendez-vous passé{missingCount > 1 ? 's' : ''} sans statut.</strong> {canEdit ? 'Indiquez s\'ils ont été honorés : sans cela, ils ne comptent pas.' : 'Obsidian Partners les renseigne ; tant que ce n\'est pas fait, ils ne comptent pas.'}</span>
+              <span><strong>{missingCount} rendez-vous passé{missingCount > 1 ? 's' : ''} sans statut.</strong> {canEdit ? 'Indiquez s\'ils ont été honorés : sans cela, le taux de présence et le coût par rendez-vous tenu sont faux.' : 'Obsidian Partners les renseigne ; tant que ce n\'est pas fait, ils ne sont pas comptés comme tenus.'}</span>
               <button class="ghost-btn" onClick={() => setFilter('a_renseigner')}>Afficher</button>
             </div>
           )}
@@ -480,15 +470,6 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
                       ))}
                     </select>
                   ) : missing(r) ? <span style="color:var(--warn)">Statut à renseigner</span> : APPT_STATUS[r.status],
-                },
-                {
-                  key: 'counts', label: 'Compte dans les 30', value: (r) => (r.status === 'honore' && r.counts_toward_target ? 1 : 0),
-                  render: (r) => (
-                    <span style="display:inline-flex;gap:8px;align-items:center">
-                      {!r.counts_toward_target ? <span class="muted">Exclu · {r.exclusion_reason}</span> : r.status === 'honore' ? <span style="color:var(--accent)">Oui</span> : 'Non'}
-                      {canEdit && <button class="ghost-btn small" onClick={() => toggleCount(r)}>{r.counts_toward_target ? 'Exclure…' : 'Réintégrer'}</button>}
-                    </span>
-                  ),
                 },
                 {
                   key: 'source', label: 'Source', value: (r) => r.origin,
@@ -569,7 +550,7 @@ export function ConsoleScreen() {
           <div class="grid grid-3">
             <div class="card edge kpi" style={{ '--edge': 'var(--accent)' }}><span class="label">Dépense pilotée · 30 j</span><span class="kpi-value">{formatEuros(data.summary.spend30_cents)}</span></div>
             <div class="card edge kpi"><span class="label">Coût moyen par rendez-vous · 30 j</span><span class="kpi-value">{formatEuros(data.summary.avgCostPerBooked30_cents, { decimals: true })}</span></div>
-            <div class="card edge kpi" style={{ '--edge': data.summary.clientsBehindPace ? 'var(--alert)' : 'var(--border)' }}><span class="label">Clients en retard sur le rythme</span><span class="kpi-value">{data.summary.clientsBehindPace}</span></div>
+            <div class="card edge kpi" style={{ '--edge': data.rows.some((r) => r.red) ? 'var(--alert)' : 'var(--border)' }}><span class="label">Clients en rouge</span><span class="kpi-value">{data.rows.filter((r) => r.red).length}</span></div>
           </div>
           {data.feedbackThemes && data.feedbackThemes.length > 0 && (
             <div class="card section">
@@ -598,7 +579,6 @@ export function ConsoleScreen() {
                 { key: 'phase', label: 'Phase', value: (r) => r.phase },
                 { key: 'onb', label: 'Onboarding', value: (r) => r.onboardingSubmittedAt, render: (r) => <a href={`/c/${r.id}/onboarding`}>{r.onboarding === 'a_remplir' ? 'À remplir' : r.onboarding === 'complement_demande' ? 'Complément demandé' : `Envoyé le ${formatDate(r.onboardingSubmittedAt, { year: false })}`}</a> },
                 { key: 'days', label: 'Jours', value: (r) => r.daysSinceStart, render: (r) => formatInt(r.daysSinceStart) },
-                { key: 'counter', label: 'RDV validés', value: (r) => r.counter?.validated ?? null, render: (r) => r.counter ? `${r.counter.validated} / ${r.counter.target}${r.counter.onPace ? '' : ' · retard'}` : '—' },
                 { key: 'spend7', label: 'Dépense 7 j', value: (r) => r.spend7_cents, render: (r) => formatEuros(r.spend7_cents) },
                 { key: 'cpb7', label: 'Coût / RDV 7 j', value: (r) => r.costPerBooked7_cents, render: (r) => formatEuros(r.costPerBooked7_cents, { decimals: true }) },
                 { key: 'conn', label: 'Connexions', value: (r) => r.connections.filter((c) => c.state === 'casse').length, render: (r) => { const b = r.connections.filter((c) => c.state === 'casse').length; const dg = r.connections.filter((c) => c.state === 'degrade').length; return b ? `${b} en panne` : dg ? `${dg} dégradée${dg > 1 ? 's' : ''}` : 'OK'; } },

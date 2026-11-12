@@ -122,7 +122,7 @@ function Blocks({ clientId, d, compare, onEvents }: { clientId: string; d: Pilot
             return (
               <KpiCard label={def.label} value={fmt(def.format, k.value)} missingReason={k.reason}
                 delta={compare ? delta(k.value, k.previous) : undefined} higherIsBetter={def.higherIsBetter}
-                verdict={k.verdict ?? undefined}
+                verdict={k.value != null && k.verdict && k.verdict !== 'non_mesure' ? k.verdict : undefined}
                 sub={compare ? <>Préc. {fmt(def.format, k.previous)}{def.threshold && d.thresholds[def.threshold.key] != null ? <> · seuil {fmt(def.format, d.thresholds[def.threshold.key] as number)}</> : null}</> : null} />
             );
           })}
