@@ -83,7 +83,8 @@ export function AgencyGuidesScreen() {
               <strong>{g.title}</strong>
               <div class="small muted">{clientName(g.clientId)} · ordre {g.sortOrder} · modifié le {formatDateTime(g.updatedAt)}{g.hasFile ? ' · PDF joint' : ''}{g.bodyMd ? '' : g.url ? ' · lien externe' : g.hasFile ? '' : ' · vide'}</div>
             </div>
-            <span style="display:flex;gap:8px;align-items:center">
+            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <PdfControls g={g} onChange={reload} compact />
               {g.published ? <Pill kind="ok">Publié</Pill> : <Pill kind="neutral">Brouillon</Pill>}
               <button class="ghost-btn" onClick={() => setEditing(g.id)}>Modifier</button>
             </span>
@@ -155,7 +156,7 @@ function GuideEditor({ g, onClose, onSaved }: { g: AgencyGuide | null; onClose: 
   );
 }
 
-function PdfControls({ g, onChange }: { g: AgencyGuide; onChange: () => void }) {
+function PdfControls({ g, onChange, compact }: { g: AgencyGuide; onChange: () => void; compact?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   async function upload(file: File | undefined) {
@@ -173,12 +174,12 @@ function PdfControls({ g, onChange }: { g: AgencyGuide; onChange: () => void }) 
   }
   return (
     <div class="small" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <span class="label">PDF</span>
-      {g.hasFile ? <span>Un PDF est joint.</span> : <span class="muted">Aucun PDF joint.</span>}
-      <label class="ghost-btn" style="cursor:pointer">{g.hasFile ? 'Remplacer le PDF' : 'Joindre un PDF'}
+      {!compact && <span class="label">PDF</span>}
+      {!compact && (g.hasFile ? <span>Un PDF est joint.</span> : <span class="muted">Aucun PDF joint.</span>)}
+      <label class={g.hasFile ? 'ghost-btn' : 'btn'} style="cursor:pointer">{g.hasFile ? 'Remplacer le PDF' : 'Joindre un PDF'}
         <input type="file" accept="application/pdf" style="display:none" disabled={busy} onChange={(e) => upload((e.target as HTMLInputElement).files?.[0])} />
       </label>
-      {g.hasFile && <button class="ghost-btn" onClick={remove}>Retirer</button>}
+      {g.hasFile && !compact && <button class="ghost-btn" onClick={remove}>Retirer le PDF</button>}
       {msg && <span style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }}>{msg.text}</span>}
     </div>
   );
