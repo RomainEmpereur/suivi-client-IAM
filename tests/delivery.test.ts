@@ -62,6 +62,9 @@ describe('Delivery : génération de toute la chaîne', () => {
     const brief = (await (await call(`/robot/clients/${B}/delivery/s2/brief`, { headers: robotHeaders })).json()) as any;
     expect(brief.masterPrompt.length).toBeGreaterThan(10000);
     expect(brief.brief).toContain('La Méthode Pilote');
+    expect(brief.brief).toContain("## 2. Les règles d'or");
+    expect(brief.brief).toContain('Visuels de la VSL');
+    expect(brief.brief).toContain('## 13. Garde-fous');
     expect(brief.brief).toContain('Texte s1b');
     expect(brief.brief).toContain('Les 8 blocs');
     const d = await get(call, B);

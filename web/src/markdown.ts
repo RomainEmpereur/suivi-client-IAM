@@ -1,5 +1,6 @@
 /**
- * Rendu markdown minimal et sûr pour les livrables (titres, gras, italique, listes, tableaux, citations, liens https).
+ * Rendu markdown minimal et sûr pour les livrables (titres, gras, italique, listes, tableaux, citations, liens https,
+ * blocs de code ; un bloc ```html s'affiche en aperçu isolé).
  * Tout le texte est échappé AVANT la mise en forme : aucun HTML du contenu n'est interprété.
  */
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -30,6 +31,18 @@ export function videoEmbedUrl(url: string): string | null {
   return null;
 }
 
+/**
+ * Aperçu d'une page HTML livrée (landing, visuels de la VSL) : iframe isolée (sandbox sans allow-same-origin :
+ * origine opaque, aucun accès à l'espace, à ses cookies ni à son API), code source dépliable en dessous.
+ * « video » = lecteur 16:9 ; sinon page à faire défiler.
+ */
+function htmlPreview(src: string, kind: 'video' | 'page'): string {
+  const label = kind === 'video' ? 'Aperçu des visuels (lecteur 16:9)' : 'Aperçu de la page';
+  return `<figure class="html-preview ${kind}"><figcaption>${label}</figcaption>`
+    + `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" loading="lazy" title="${label}" srcdoc="${esc(src)}"></iframe>`
+    + `<details><summary>Code HTML (${src.length.toLocaleString('fr-FR')} caractères)</summary><pre class="md-code"><code>${esc(src)}</code></pre></details></figure>`;
+}
+
 const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
 
 export function renderMarkdown(md: string): string {
@@ -42,6 +55,17 @@ export function renderMarkdown(md: string): string {
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) { const n = Math.min(h[1].length + 1, 6); out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push('<hr />'); i++; continue; }
+    const fence = line.match(/^\s*```\s*([\w-]*)\s*([\w-]*)\s*$/);
+    if (fence) {
+      const code: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
+      i++; // fermeture
+      const src = code.join('\n');
+      if (fence[1].toLowerCase() === 'html') out.push(htmlPreview(src, fence[2].toLowerCase() === 'video' ? 'video' : 'page'));
+      else out.push(`<pre class="md-code"><code>${esc(src)}</code></pre>`);
+      continue;
+    }
     const vid = line.trim().match(/^@\[([^\]]*)\]\((https:\/\/[^\s)]+)\)$/);
     if (vid) {
       const src = videoEmbedUrl(vid[2]);
@@ -76,7 +100,7 @@ export function renderMarkdown(md: string): string {
       continue;
     }
     const buf: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s/.test(lines[i]) && !/^\s*([-*•]|\d+[.)])\s+/.test(lines[i])
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s/.test(lines[i]) && !/^\s*```/.test(lines[i]) && !/^\s*([-*•]|\d+[.)])\s+/.test(lines[i])
       && !lines[i].trim().startsWith('|') && !/^\s*>/.test(lines[i]) && !/^\s*(-{3,}|\*{3,})\s*$/.test(lines[i])) {
       buf.push(lines[i]); i++;
     }

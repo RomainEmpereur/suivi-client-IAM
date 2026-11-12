@@ -343,3 +343,12 @@ tr.row-alert td { background: var(--alert-soft); }
 .field input:focus, .field select:focus { border-color: var(--accent); outline: none; }
 .field .hint { color: var(--text-2); font-size: 12px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; }
+/* Aperçu des pages HTML livrées (landing, visuels de la VSL) */
+.md-code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; overflow: auto; max-height: 420px; font-family: var(--font-mono); font-size: 12px; white-space: pre; }
+.html-preview { margin: 14px 0; }
+.html-preview figcaption { font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-2); margin-bottom: 6px; }
+.html-preview iframe { display: block; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.html-preview.video iframe { aspect-ratio: 16 / 9; height: auto; }
+.html-preview.page iframe { height: 80vh; min-height: 560px; }
+.html-preview details { margin-top: 6px; font-size: 13px; }
+.html-preview summary { cursor: pointer; color: var(--text-2); }

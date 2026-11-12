@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
-  ALL_QUESTIONS, CHAIN_STEPS, DELIVERY_STEPS, DELIVERY_STEP_BY_KEY, MASTER_PROMPT, ONBOARDING_SECTIONS, deliveryGate, derived,
-  formatDate, formatEuros, formatInt, formatPercent, isAnswered, stepAvailability, stepInstructions, validationBlocker,
+  ALL_QUESTIONS, ALWAYS_SECTIONS, CHAIN_STEPS, DELIVERY_STEPS, DELIVERY_STEP_BY_KEY, MASTER_PROMPT, ONBOARDING_SECTIONS, deliveryGate, derived,
+  formatDate, formatEuros, formatInt, formatPercent, isAnswered, masterSection, stepAvailability, stepInstructions, validationBlocker,
   type DeliveryStep,
 } from '@obsidian/domain';
 import type { AppEnv, Bindings, ClientRow } from '../env.ts';
@@ -164,6 +164,9 @@ function buildBrief(step: DeliveryStep, st: State, weekly: string | null): strin
 
   out.push("## Consignes de l'étape (extrait du master prompt)");
   out.push(stepInstructions(step));
+  out.push('');
+  out.push('## Règles valables pour toutes les étapes (extrait du master prompt)');
+  for (const h of ALWAYS_SECTIONS) out.push(masterSection(h), '');
   out.push('');
   out.push('## Ce que tu rends');
   out.push("Le livrable complet en markdown (titres, listes, tableaux), prêt à être relu par l'agence puis lu par le client. " +

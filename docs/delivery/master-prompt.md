@@ -32,7 +32,7 @@ Valables sur chaque livrable, quel que soit le client.
 6. **Un seul CTA par asset**, toujours les mêmes mots. Jamais un menu d'options.
 7. **Aucun prix nulle part** : ni dans la VSL, ni sur la landing, ni dans les publicités, ni dans les emails. Le prix se dit en démonstration, par le client. La FAQ de la landing traite la question sans donner de montant.
 8. **Rien de chiffré n'est inventé.** Chaque chiffre est sourcé, ou marqué « à confirmer ».
-9. **Urgence et rareté toujours réelles.** Une fausse urgence détruit la crédibilité.
+9. **Bonus, garantie, rareté et urgence : seulement ce que le client a mentionné dans son onboarding.** On ne propose aucun bonus, aucune garantie, aucune limite de places et aucune échéance qu'il n'a pas citées, et on ne reformule pas une garantie en y ajoutant des conditions. S'il n'en mentionne pas, la section le dit en une ligne et s'arrête là. Une fausse urgence détruit la crédibilité.
 10. **Cohérence de bout en bout.** Avatar, mécanisme nommé, promesse, preuve et messages clés sont fixés à l'étape 1 et repris à l'identique partout.
 11. **Prêt à coller.** Pages en un seul bloc de code personnalisé, séquences au format canal, déclencheur, délai, objet, corps, condition de sortie, avec `[Prénom]` en variable.
 
@@ -65,6 +65,8 @@ Pour les 5 annonceurs les plus sérieux, remonte le tunnel : page de destination
 ### 1B · L'offre, document interne
 
 Le document d'offre complet. Skills : `jtbd-demand-side` → `ads-eugene-framework` (le diagnostic vient de 1A, ne le refais pas) → `offre-hormozi` → `cashvertising-psychologie`. C'est la pièce mère : tout découle d'elle. **Elle n'est pas envoyée au client.**
+
+**Bonus et garantie** : uniquement ceux que le client cite dans son onboarding, repris tels qu'il les formule. Aucun bonus « à créer » ni garantie « recommandée ». **Rareté et urgence** : uniquement si l'onboarding en mentionne une (places limitées, échéance datée) ; une capacité de rendez-vous n'est pas une rareté. Sinon, la section l'indique en une ligne.
 
 ### 1C · La page client
 
@@ -102,7 +104,9 @@ Le **bloc 3** est obligatoire. Si le marché n'a aucune échéance datée à mon
 
 **La preuve ne vit jamais en bloc** : une statistique dans le bloc 2, l'effet d'entraînement dans le bloc 4, un cas client dans le bloc 5. Micro-oui en fin des blocs 2, 4 et 5. Budget : 1 000 à 1 150 mots.
 
-**Sorties** : le script mot à mot timecodé avec les notes de tournage · l'habillage vidéo 16:9, construit après réception du rush, aux couleurs du client, une scène par beat, médaillon du visage en bas à droite par défaut avec six déplacements maximum, effets sonores légers, export 1920 × 1080 à 30 images par seconde.
+**Sorties** : le script mot à mot timecodé avec les notes de tournage · la section **« Visuels de la VSL »** · l'habillage vidéo 16:9, construit après réception du rush, aux couleurs du client, une scène par beat, médaillon du visage en bas à droite par défaut avec six déplacements maximum, effets sonores légers, export 1920 × 1080 à 30 images par seconde.
+
+**Visuels de la VSL** : la maquette animée de l'habillage, pour voir le rendu avant le tournage. Un seul bloc de code ` ```html video ` (le mot `video` après `html` est obligatoire : l'espace l'affiche comme un lecteur 16:9). Page HTML autonome — CSS et JavaScript dans le bloc, aucune bibliothèque externe sauf une police Google Fonts — qui enchaîne automatiquement **une scène par beat du script**, calée sur ses timecodes en temps réel (bouton lecture / pause, barre de progression cliquable, temps écoulé, possibilité d'accélérer ×4 pour relire). Chaque scène montre ce que l'habillage affichera : titre ou chiffre clé, mots-clés qui apparaissent sur la voix, schéma du mécanisme nommé, emplacement du médaillon du fondateur (cercle en bas à droite, marqué « fondateur »), captures produit en emplacements nommés (« capture : tableau de rentabilité ») quand on ne les a pas. Mêmes règles de design que la landing (section 6).
 
 ## 6. Étape 3 — La landing page
 
@@ -123,15 +127,21 @@ Principe : sous le calendrier, **la page ne rejoue pas la VSL**. Elle sert celui
 
 **La frise de la section 6** : deux pistes superposées, avant et après, segments proportionnels, deux couleurs seulement — l'accent du client pour le travail utile, l'ambre pour le temps perdu. Légende, axe horaire, infobulle par segment, apparition au défilement, et une phrase de verdict en dessous. Hypothèse de calcul écrite en clair.
 
-**Règles** : un seul CTA aux sections 1, 8 et 10, chaque bouton défile vers le calendrier · pas de menu de navigation · test du scan, si on ne lit que les titres l'argument tient debout · 8 à 10 écrans, mobile d'abord · un seul bloc de code personnalisé · calendrier et lecteur vidéo chargés au défilement · la VSL ne démarre pas seule avec le son.
+**Règles** : un seul CTA aux sections 1, 8 et 10, chaque bouton défile vers le calendrier · pas de menu de navigation · test du scan, si on ne lit que les titres l'argument tient debout · 8 à 10 écrans, mobile d'abord · un seul bloc de code personnalisé, rendu dans un bloc ` ```html page ` (l'espace l'affiche en aperçu) · calendrier et lecteur vidéo chargés au défilement · la VSL ne démarre pas seule avec le son.
+
+**Le design, pas un gabarit d'IA.** La page doit avoir l'air faite par un studio pour ce client, pas générée. À proscrire : dégradés violet-bleu, fonds en verre dépoli, émojis en guise d'icônes, cartes identiques alignées par trois partout, ombres portées généralisées, textes centrés sur toute la page, illustrations génériques, « Boostez », « Révolutionnez », « Découvrez la puissance de ». À faire : la charte du client (couleurs, police ; à défaut, une palette sobre de deux couleurs plus des neutres, et une police de caractère avec du caractère via Google Fonts) · une vraie hiérarchie typographique (grands titres serrés, corps lisible à 17-18 px, chiffres mis en scène) · des captures du produit réelles, cadrées dans un cadre d'écran, ou des emplacements nommés quand on ne les a pas · des sections au rythme varié (pleine largeur, deux colonnes, citation isolée, chiffre géant) · des preuves concrètes (logos, visages, verbatims entre guillemets avec nom et fonction) · des micro-animations discrètes au défilement, jamais de parallaxe. Quand l'agence fournit des landings de référence, on en reprend le niveau de finition et les partis pris, jamais le contenu.
 
 ## 7. Étape 4 — Les scripts d'ads
 
-30 à 60 secondes, format 9:16. Tous les scripts d'une vague s'écrivent pour **un seul stade de conscience**, celui que donne le diagnostic de 1A. Ce qui varie d'un script à l'autre, c'est l'angle.
+30 à 60 secondes, **jamais plus d'une minute** (environ 150 mots dits au maximum), format 9:16. Tous les scripts d'une vague s'écrivent pour **un seul stade de conscience**, celui que donne le diagnostic de 1A. Ce qui varie d'un script à l'autre, c'est l'angle.
+
+**Le CTA des publicités n'est pas la prise de rendez-vous** : la publicité envoie vers le tunnel de vente, où la VSL fait le travail. Le CTA invite à découvrir le système dans la présentation complète enregistrée, par exemple : « Découvrez le système : on a enregistré une présentation complète, une vidéo qui détaille tout. Le lien est juste en dessous. » Bouton Meta : « En savoir plus ». Mêmes mots dans les six scripts.
+
+**Forme d'écriture** : chaque script s'écrit **en paragraphes**, comme il sera dit, un paragraphe par temps de la structure, avec son timecode en tête (« 0–3 s — … »). Pas de tableau. Les indications de tournage et d'incrustation suivent le script, en une courte liste.
 
 **Six scripts, deux vagues de trois** : trois au lancement, trois à J+14 pour remplacer ce qui ne tourne pas. Six et non dix, parce qu'une créative a besoin d'une centaine d'euros de dépense avant d'être jugeable.
 
-**Structure en six temps**, conservée : appel à l'audience dans les trois premières secondes · sa journée · ce n'est pas votre faute · sa situation rêvée et ceux qui y sont arrivés · le produit comme solution, avec le mécanisme nommé mot pour mot · un seul CTA, les mots du bouton.
+**Structure en six temps**, conservée : appel à l'audience dans les trois premières secondes · sa journée · ce n'est pas votre faute · sa situation rêvée et ceux qui y sont arrivés · le produit comme solution, avec le mécanisme nommé mot pour mot · un seul CTA, vers la présentation vidéo.
 
 Les scripts de reciblage sont **listés en intention, pas écrits**, avec leur seuil d'activation : dépense au-dessus de 60 €/jour ou plus de deux mille visiteurs sur trente jours.
 
@@ -230,6 +240,7 @@ Ce qui part au client : le tableau comparé à la semaine précédente, les troi
 - **Aucun chiffre inventé.** Sourcé, ou marqué à confirmer. Les indices de la bibliothèque publicitaire ne sont pas des mesures de performance.
 - **Jamais la thèse d'Obsidian Partners** dans un livrable client.
 - **Un seul CTA** par asset, toujours les mêmes mots.
+- **Aucun bonus, aucune garantie, aucune rareté ni urgence** que le client n'a pas mentionnés dans son onboarding.
 
 ## 14. Démarrer un nouveau client
 

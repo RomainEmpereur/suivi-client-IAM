@@ -33,3 +33,21 @@ describe('Vidéos intégrées', () => {
     expect(other).toContain('href="https://evil.example/v"');
   });
 });
+
+describe('Blocs de code et aperçu HTML', async () => {
+  const { renderMarkdown } = await import('../web/src/markdown.ts');
+  it('un bloc ```html devient un aperçu isolé (sandbox sans same-origin), le code reste échappé', () => {
+    const html = renderMarkdown('Avant\n```html video\n<script>alert(1)</script><h1 class="x">Titre</h1>\n```\nAprès');
+    expect(html).toContain('<figure class="html-preview video">');
+    expect(html).toContain('sandbox="allow-scripts"');
+    expect(html).not.toContain('allow-same-origin');
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;&lt;h1 class=&quot;x&quot;&gt;Titre&lt;/h1&gt;"');
+    expect(html).toContain('<p>Après</p>');
+  });
+  it('un bloc ```html sans mot-clé est une page ; un autre langage reste du code', () => {
+    expect(renderMarkdown('```html\n<p>x</p>\n```')).toContain('html-preview page');
+    const js = renderMarkdown('```js\nconst a = "<b>";\n```');
+    expect(js).toContain('<pre class="md-code"><code>const a = &quot;&lt;b&gt;&quot;;</code></pre>');
+  });
+});

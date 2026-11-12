@@ -86,9 +86,17 @@ export function validationBlocker(step: DeliveryStep, ctx: { hasContent: boolean
 
 /** Consignes d'une étape, extraites du master prompt (de son titre au titre de même niveau suivant). */
 export function stepInstructions(step: DeliveryStep, md: string = MASTER_PROMPT): string {
+  return masterSection(step.heading, md);
+}
+
+/** Règles valables pour toutes les étapes, jointes à chaque brief : règles d'or et garde-fous du master prompt. */
+export const ALWAYS_SECTIONS = ["2. Les règles d'or", '13. Garde-fous'];
+
+/** Une section du master prompt, de son titre au titre de même niveau suivant. */
+export function masterSection(heading: string, md: string = MASTER_PROMPT): string {
   const lines = md.split('\n');
-  const start = lines.findIndex((l) => /^#{2,3} /.test(l) && l.replace(/^#+ /, '').trim() === step.heading);
-  if (start < 0) throw new Error(`Section introuvable dans le master prompt : ${step.heading}`);
+  const start = lines.findIndex((l) => /^#{2,3} /.test(l) && l.replace(/^#+ /, '').trim() === heading);
+  if (start < 0) throw new Error(`Section introuvable dans le master prompt : ${heading}`);
   const level = lines[start].match(/^#+/)![0].length;
   let end = lines.length;
   for (let j = start + 1; j < lines.length; j++) {
