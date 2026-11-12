@@ -51,7 +51,7 @@ describe('Feedback', () => {
     expect(Array.isArray(agency.context.connections)).toBe(true);
     const mine = ((await (await call(`/clients/${B}/feedback`, { as: CLIENT_B })).json()) as any).feedback.find((f: any) => f.id === id);
     expect(mine.context).toBeUndefined();
-    expect(mine.attachments).toEqual([{ url: 'https://exemple.fr/capture.png' }]);
+    expect(mine.attachments).toEqual([{ index: 0, url: 'https://exemple.fr/capture.png' }]);
     expect((await call(`/clients/${B}/feedback/${id}`, { as: AGENCE, method: 'PATCH', body: { reply: 'On ajuste les audiences demain.' } })).status).toBe(200);
     const after = ((await (await call(`/clients/${B}/feedback`, { as: CLIENT_B })).json()) as any).feedback.find((f: any) => f.id === id);
     expect(after).toMatchObject({ status: 'en_cours', reply: 'On ajuste les audiences demain.' });
@@ -66,5 +66,63 @@ describe('Feedback', () => {
     expect((await call(`/clients/${B}/feedback`, { as: AGENCE, method: 'POST', body: { category: 'bug', body: 'Bug constaté' } })).status).toBe(403);
     expect((await call(`/clients/${A}/feedback/fb_${A}_1`, { as: CLIENT_A, method: 'PATCH', body: { status: 'resolu' } })).status).toBe(403);
     expect((await call(`/clients/${A}/feedback`, { as: CLIENT_B })).status).toBe(404);
+  });
+});
+
+describe('Retours : pièces jointes et boîte de réception (décision 0015)', () => {
+  const fakeR2 = () => {
+    const m = new Map<string, { body: ArrayBuffer; meta: any }>();
+    return { map: m,
+      put: async (k: string, v: ArrayBuffer, o: any) => { m.set(k, { body: v, meta: o?.httpMetadata }); },
+      get: async (k: string) => { const x = m.get(k); return x ? { body: new Blob([x.body]).stream(), httpMetadata: x.meta } : null; },
+      delete: async (k: string) => { m.delete(k); } };
+  };
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+
+  it('le client joint une capture à son retour ; l’agence la voit dans sa boîte de réception et l’ouvre ; un autre client non', async () => {
+    const { setup, A, B, AGENCE, CLIENT_A, CLIENT_B } = await import('./helpers/app.ts');
+    const { call, env } = setup();
+    const r2 = fakeR2();
+    (env as any).FILES = r2;
+    const { id } = (await (await call(`/clients/${A}/feedback`, { as: CLIENT_A, method: 'POST', body: { category: 'bug', severity: 'haute', body: 'Le formulaire ne s’envoie plus.' } })).json()) as any;
+    const app = (await import('../api/src/index.ts')).default;
+    const send = (as: string, body: Uint8Array, type: string, client = A) => app.request(`/api/clients/${client}/feedback/${id}/files`,
+      { method: 'PUT', headers: { 'X-Dev-User': as, 'Content-Type': type, 'X-File-Name': encodeURIComponent('capture écran.png') }, body }, env);
+    expect((await send(CLIENT_A, new TextEncoder().encode('pas une image'), 'image/png')).status).toBe(400);
+    expect((await send(CLIENT_A, png, 'text/html')).status).toBe(400);
+    expect((await send(AGENCE, png, 'image/png')).status).toBe(403);
+    expect((await send(CLIENT_B, png, 'image/png', B)).status).toBe(404);
+    expect((await send(CLIENT_A, png, 'image/png')).status).toBe(201);
+    expect(r2.map.size).toBe(1);
+    const list = (await (await call(`/clients/${A}/feedback`, { as: AGENCE })).json()) as any;
+    const fb = list.feedback.find((f: any) => f.id === id);
+    expect(fb.attachments).toEqual([{ index: 0, name: 'capture écran.png', type: 'image/png', size: png.byteLength }]);
+    expect(JSON.stringify(list)).not.toContain('feedback/'); // la clé R2 ne sort pas
+    const dl = await call(`/clients/${A}/feedback/${id}/files/0`, { as: AGENCE });
+    expect(dl.status).toBe(200);
+    expect(dl.headers.get('content-type')).toBe('image/png');
+    expect((await call(`/clients/${A}/feedback/${id}/files/0`, { as: CLIENT_B })).status).toBe(404);
+    const console = (await (await call('/agence/console', { as: AGENCE })).json()) as any;
+    const item = console.feedbackInbox.find((i: any) => i.id === id);
+    expect(item).toMatchObject({ clientId: A, severity: 'haute', status: 'nouveau', attachments: 1 });
+    expect(console.feedbackInbox[0].severity).toBe('haute');
+  });
+});
+
+describe('Rapport enrichi', () => {
+  it('ratios, série par jour, campagnes et publicités figés dans le rapport', async () => {
+    const { setup, A, AGENCE } = await import('./helpers/app.ts');
+    const { addDaysYmd, todayParis } = await import('../packages/domain/src/index.ts');
+    const { call } = setup();
+    const day = addDaysYmd(todayParis(), -10);
+    const r = await call(`/clients/${A}/reports`, { as: AGENCE, method: 'POST', body: { periodType: 'semaine', day } });
+    expect(r.status).toBe(201);
+    const list = (await (await call(`/clients/${A}/reports`, { as: AGENCE })).json()) as any;
+    const s = list.reports[0].snapshot;
+    expect(s.ratioRows.map((x: any) => x.key)).toEqual(['ctr', 'cpc_cents', 'cpm_cents', 'cost_per_lead_cents', 'cost_per_booked_cents', 'show_rate', 'cac_cents', 'roas_cash']);
+    expect(s.series).toHaveLength(7);
+    expect(s.campaigns.length).toBeGreaterThan(0);
+    expect(s.campaigns.every((c: any) => c.id !== 'saisie_manuelle' && c.id !== 'encaissement_manuel')).toBe(true);
+    expect(s.topAds.length).toBeGreaterThan(0);
   });
 });

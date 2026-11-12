@@ -577,8 +577,29 @@ interface ConsoleRow {
   onboarding: 'a_remplir' | 'envoye' | 'complement_demande'; onboardingSubmittedAt: string | null;
 }
 
+interface InboxItem { id: string; clientId: string; clientName: string; category: string; severity: string; status: string; excerpt: string; attachments: number; createdAt: string }
+const INBOX_CAT: Record<string, string> = { bug: 'Bug', resultat: 'Résultat décevant', demande: 'Demande', question: 'Question' };
+const INBOX_STAT: Record<string, string> = { nouveau: 'Nouveau', vu: 'Vu', en_cours: 'En cours' };
+
+/** Retours clients à traiter, tous clients (décision 0015) : l'agence reçoit chaque demande ici. */
+function FeedbackInbox({ items }: { items: InboxItem[] }) {
+  const fresh = items.filter((i) => i.status === 'nouveau').length;
+  return (
+    <div class="card section" style={{ borderColor: fresh ? 'var(--warn)' : undefined }}>
+      <div class="label">Retours clients à traiter</div>
+      <div class="small muted">{items.length ? `${items.length} ouvert${items.length > 1 ? 's' : ''}, dont ${fresh} nouveau${fresh > 1 ? 'x' : ''}` : 'Aucun retour en attente.'}</div>
+      {items.map((i) => (
+        <a href={`/c/${i.clientId}/feedback`} style={{ display: 'block', borderLeft: `3px solid ${i.severity === 'haute' ? 'var(--alert)' : i.severity === 'normale' ? 'var(--warn)' : 'var(--border)'}`, padding: '4px 10px', margin: '8px 0', color: 'var(--text)' }}>
+          <div class="small"><strong>{i.clientName}</strong> · {INBOX_CAT[i.category] ?? i.category}{i.severity === 'haute' ? ' · urgent' : ''} · <span class="mono small muted">{INBOX_STAT[i.status] ?? i.status} · {formatDate(i.createdAt, { year: false })}{i.attachments ? ` · ${i.attachments} pièce${i.attachments > 1 ? 's' : ''} jointe${i.attachments > 1 ? 's' : ''}` : ''}</span></div>
+          <div class="small muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{i.excerpt}</div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 export function ConsoleScreen() {
-  const { data, error, loading } = useApi<{ summary: { spend30_cents: number | null; avgCostPerBooked30_cents: number | null; clientsBehindPace: number }; rows: ConsoleRow[]; feedbackThemes?: { category: string; recent: number; open: number; clients: string[] }[] }>('/agence/console');
+  const { data, error, loading } = useApi<{ summary: { spend30_cents: number | null; avgCostPerBooked30_cents: number | null; clientsBehindPace: number }; rows: ConsoleRow[]; feedbackThemes?: { category: string; recent: number; open: number; clients: string[] }[]; feedbackInbox?: InboxItem[] }>('/agence/console');
   const [onlyRed, setOnlyRed] = useState(false);
   return (
     <>
@@ -592,6 +613,7 @@ export function ConsoleScreen() {
             <div class="card edge kpi"><span class="label">Coût moyen par rendez-vous · 30 j</span><span class="kpi-value">{formatEuros(data.summary.avgCostPerBooked30_cents, { decimals: true })}</span></div>
             <div class="card edge kpi" style={{ '--edge': data.rows.some((r) => r.red) ? 'var(--alert)' : 'var(--border)' }}><span class="label">Clients en rouge</span><span class="kpi-value">{data.rows.filter((r) => r.red).length}</span></div>
           </div>
+          <FeedbackInbox items={data.feedbackInbox ?? []} />
           <ConsoleAlerts clients={data.rows.map((r) => ({ id: r.id, name: r.name }))} />
           {data.feedbackThemes && data.feedbackThemes.length > 0 && (
             <div class="card section">

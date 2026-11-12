@@ -37,8 +37,8 @@ async function dailyFull(db: D1Database, clientId: string, from: string, to: str
   return out;
 }
 
-interface Appt { booked_at: string; scheduled_at: string; status: string }
-function appointmentRates(appts: Appt[], from: string, to: string): AppointmentRates {
+export interface Appt { booked_at: string; scheduled_at: string; status: string }
+export function appointmentRates(appts: Appt[], from: string, to: string): AppointmentRates {
   const start = parisDayStartMs(from), end = parisDayStartMs(addDaysYmd(to, 1));
   const inP = (iso: string) => { const t = Date.parse(iso); return t >= start && t < end; };
   const booked = appts.filter((a) => inP(a.booked_at));

@@ -73,6 +73,11 @@ agency.get('/console', async (c) => {
     `SELECT f.category, SUM(f.created_at >= ?1) AS recent, SUM(f.status != 'resolu') AS open, GROUP_CONCAT(DISTINCT c.name) AS clients
      FROM feedback f JOIN clients c ON c.id = f.client_id WHERE f.client_id IN (${ids.map((_, i) => `?${i + 2}`).join(',')})
      GROUP BY f.category ORDER BY recent DESC, open DESC`, new Date(Date.now() - 7 * 86_400_000).toISOString(), ...ids) : [];
+  // Boîte de réception (décision 0015) : tous les retours non résolus, les plus graves et les plus anciens d'abord.
+  const inbox = ids.length ? await all<{ id: string; client_id: string; client_name: string; category: string; severity: string; status: string; body: string; attachments_json: string; created_at: string }>(db,
+    `SELECT f.id, f.client_id, c.name AS client_name, f.category, f.severity, f.status, substr(f.body, 1, 240) AS body, f.attachments_json, f.created_at
+     FROM feedback f JOIN clients c ON c.id = f.client_id WHERE f.status != 'resolu' AND f.client_id IN (${ids.map((_, i) => `?${i + 1}`).join(',')})
+     ORDER BY CASE f.severity WHEN 'haute' THEN 0 WHEN 'normale' THEN 1 ELSE 2 END, (f.status = 'nouveau') DESC, f.created_at LIMIT 50`, ...ids) : [];
   const spend30 = rows.reduce((s, r) => s + (r.spend30_cents ?? 0), 0);
   const booked30 = rows.reduce((s, r) => s + (r.booked30 ?? 0), 0);
   return c.json({
@@ -82,6 +87,10 @@ agency.get('/console', async (c) => {
       clientsBehindPace: rows.filter((r) => r.counter && !r.counter.onPace).length,
     },
     rows,
+    feedbackInbox: inbox.map((f) => {
+      let n = 0; try { n = (JSON.parse(f.attachments_json || '[]') as unknown[]).length; } catch { n = 0; }
+      return { id: f.id, clientId: f.client_id, clientName: f.client_name, category: f.category, severity: f.severity, status: f.status, excerpt: f.body, attachments: n, createdAt: f.created_at };
+    }),
     feedbackThemes: themes.filter((t) => t.recent > 0 || t.open > 0).map((t) => ({ category: t.category, recent: t.recent, open: t.open, clients: (t.clients ?? '').split(',').filter(Boolean) })),
   });
 });

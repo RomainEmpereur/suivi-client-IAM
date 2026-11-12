@@ -1,8 +1,8 @@
 import { useState } from 'preact/hooks';
-import { DASH, addDaysYmd, formatDate, formatDateTime, formatDelta, formatEuros, formatInt, todayParis } from '@obsidian/domain';
-import { ApiError, api, useApi } from '../api.ts';
+import { DASH, addDaysYmd, formatDate, formatDateTime, formatDelta, formatEuros, formatInt, formatPercent, formatRatio, todayParis } from '@obsidian/domain';
+import { ApiError, api, openFile, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
-import { AgencyNote, EmptyState, ErrorBox, Loading, PageHead, Pill, Segmented } from '../components/ui.tsx';
+import { AgencyNote, DualBarChart, EmptyState, ErrorBox, Loading, PageHead, Pill, Segmented } from '../components/ui.tsx';
 
 interface Row { key: string; label: string; money: boolean; current: number | null; previous: number | null; delta: number | null; reason: string | null }
 interface Report {
@@ -12,10 +12,20 @@ interface Report {
     client: { name: string; currency: string };
     period: { type: string; from: string; to: string; fullTo: string; partial: boolean; previousFrom: string; previousTo: string };
     rows: Row[]; lastSync: string | null; generatedAt: string;
+    // Contenu enrichi (rapports générés depuis le 12 nov. 2026) : absent des rapports plus anciens.
+    ratioRows?: RatioRow[];
+    series?: { date: string; spend_cents: number | null; leads: number | null; appointments_booked: number | null }[];
+    crmMeasured?: boolean;
+    campaigns?: EntityRow[]; topAds?: EntityRow[];
   };
 }
 
+interface RatioRow { key: string; label: string; format: 'euros' | 'percent' | 'ratio'; higherIsBetter: boolean; current: number | null; previous: number | null; delta: number | null; reason: string | null }
+interface EntityRow { id: string; name: string; spend_cents: number; impressions: number; link_clicks: number; leads: number; appointments_booked: number | null; cost_per_booked_cents: number | null; cost_per_lead_cents: number | null; ctr: number | null }
+
 const HIGHER_BAD = new Set<string>();
+const fmtRatio = (r: RatioRow, v: number | null) => v == null ? DASH
+  : r.format === 'euros' ? formatEuros(v, { decimals: true }) : r.format === 'percent' ? formatPercent(v, r.key === 'ctr' ? 2 : 1) : formatRatio(v);
 const val = (r: Row, v: number | null) => (v == null ? DASH : r.money ? formatEuros(v) : formatInt(v));
 
 /** Rapport de période (§11) : tableau comparatif figé, analyse de l'agence, impression / PDF. */
@@ -122,6 +132,39 @@ function ReportView({ clientId, r, agency, onChange }: { clientId: string; r: Re
       </div>
       {s.client.currency !== 'EUR' && <p class="small muted">Montants en euros (compte publicitaire en {s.client.currency}, converti au taux BCE du jour).</p>}
 
+      {s.ratioRows && (
+        <>
+          <h3 style="margin:18px 0 6px">Ratios clés</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">Ratio</th><th scope="col">Période</th><th scope="col">Période précédente</th><th scope="col">Évolution</th></tr></thead>
+              <tbody>
+                {s.ratioRows.map((row) => (
+                  <tr>
+                    <td>{row.label}</td>
+                    <td class="mono">{fmtRatio(row, row.current)}{row.current == null && row.reason && <div class="small muted">{row.reason}</div>}</td>
+                    <td class="mono">{fmtRatio(row, row.previous)}</td>
+                    <td class={`mono ${row.delta == null ? '' : (row.delta >= 0) === row.higherIsBetter ? 'delta good' : 'delta bad'}`}>{row.delta == null ? DASH : formatDelta(row.delta)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {s.series && s.series.length > 1 && (
+        <div class="report-chart">
+          <h3 style="margin:18px 0 6px">Par jour</h3>
+          {s.crmMeasured
+            ? <DualBarChart data={s.series.map((d) => ({ date: d.date, a: d.spend_cents, b: d.appointments_booked }))} a={{ label: 'Dépense', format: (v) => formatEuros(v) }} b={{ label: 'Rendez-vous pris', format: formatInt }} />
+            : <DualBarChart data={s.series.map((d) => ({ date: d.date, a: d.spend_cents, b: d.leads }))} a={{ label: 'Dépense', format: (v) => formatEuros(v) }} b={{ label: 'Leads', format: formatInt }} />}
+        </div>
+      )}
+
+      {s.campaigns && s.campaigns.length > 0 && <EntityTable title="Campagnes" rows={s.campaigns} crm={Boolean(s.crmMeasured)} />}
+      {s.topAds && s.topAds.length > 0 && <EntityTable title="Publicités (les plus dépensières)" rows={s.topAds} crm={Boolean(s.crmMeasured)} />}
+
       <h3 style="margin:18px 0 6px">Analyse et prochaines actions</h3>
       {agency ? (
         <div class="no-print" style="display:flex;flex-direction:column;gap:8px">
@@ -146,16 +189,58 @@ function ReportView({ clientId, r, agency, onChange }: { clientId: string; r: Re
   );
 }
 
+function EntityTable({ title, rows, crm }: { title: string; rows: EntityRow[]; crm: boolean }) {
+  return (
+    <>
+      <h3 style="margin:18px 0 6px">{title}</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th scope="col">Nom</th><th scope="col">Dépense</th><th scope="col">Clics</th><th scope="col">CTR</th><th scope="col">Leads</th><th scope="col">Coût / lead</th>
+            {crm && <><th scope="col">Rendez-vous</th><th scope="col">Coût / RDV</th></>}
+          </tr></thead>
+          <tbody>
+            {rows.map((e) => (
+              <tr class={crm && e.spend_cents > 0 && e.appointments_booked === 0 ? 'red' : ''}>
+                <td style="max-width:280px;overflow-wrap:anywhere">{e.name}</td>
+                <td class="mono">{formatEuros(e.spend_cents)}</td>
+                <td class="mono">{formatInt(e.link_clicks)}</td>
+                <td class="mono">{e.ctr == null ? DASH : formatPercent(e.ctr, 2)}</td>
+                <td class="mono">{formatInt(e.leads)}</td>
+                <td class="mono">{formatEuros(e.cost_per_lead_cents, { decimals: true })}</td>
+                {crm && <><td class="mono">{e.appointments_booked == null ? DASH : formatInt(e.appointments_booked)}</td>
+                  <td class="mono">{e.appointments_booked === 0 && e.spend_cents > 0 ? `${formatEuros(e.spend_cents)} sans RDV` : formatEuros(e.cost_per_booked_cents, { decimals: true })}</td></>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 // ─────────────────────────── Feedback (§11) ───────────────────────────
 
+interface Attachment { index: number; url?: string; name?: string; type?: string; size?: number }
 interface Feedback {
-  id: string; category: string; severity: string; body: string; attachments: { url: string }[]; status: string;
+  id: string; category: string; severity: string; body: string; attachments: Attachment[]; status: string;
   reply: string | null; repliedAt: string | null; createdAt: string;
   context?: { period: { from: string; to: string }; totals: Record<string, number> | null; derived: Record<string, number | null> | null; connections: { type: string; state: string; error_message: string | null }[]; recommendations: { date: string; title: string; severity: string; state: string }[] };
 }
 const CAT: Record<string, string> = { bug: 'Bug', resultat: 'Résultat décevant', demande: 'Demande', question: 'Question' };
-const SEV: Record<string, string> = { faible: 'Faible', normale: 'Normale', haute: 'Haute' };
-const STAT: Record<string, [string, string]> = { nouveau: ['Nouveau', 'surveiller'], vu: ['Vu', 'neutral'], en_cours: ['En cours', 'info'], resolu: ['Résolu', 'ok'] };
+const CAT_HINT: Record<string, string> = {
+  bug: 'Quelque chose ne marche pas : page, formulaire, calendrier, chiffre faux…',
+  resultat: 'Les résultats ne sont pas au niveau attendu : leads, rendez-vous, qualité…',
+  demande: 'Une modification ou un ajout : publicité, page, séquence, accès…',
+  question: 'Vous voulez comprendre un chiffre, une étape, un choix.',
+};
+const SEV: Record<string, string> = { faible: 'Faible', normale: 'Normale', haute: 'Urgente' };
+const SEV_HINT: Record<string, string> = { faible: 'Quand vous aurez le temps', normale: 'Dans les jours qui viennent', haute: 'Bloquant : les campagnes ou les ventes en pâtissent' };
+/** Libellés : l'agence suit le traitement ; le client voit où en est sa demande (pas de discussion, décision 0015). */
+const STAT_AGENCY: Record<string, [string, string]> = { nouveau: ['Nouveau', 'surveiller'], vu: ['Vu', 'neutral'], en_cours: ['En cours', 'info'], resolu: ['Traité', 'ok'] };
+const STAT_CLIENT: Record<string, [string, string]> = { nouveau: ['Reçu', 'surveiller'], vu: ['Pris en compte', 'neutral'], en_cours: ['En cours de traitement', 'info'], resolu: ['Traité', 'ok'] };
+const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,application/pdf,video/mp4,video/quicktime';
+const sizeLabel = (n?: number) => n == null ? '' : n > 1_048_576 ? `${(n / 1_048_576).toFixed(1).replace('.', ',')} Mo` : `${Math.max(1, Math.round(n / 1024))} Ko`;
 
 export function FeedbackScreen({ clientId }: { clientId: string }) {
   const { me, view } = useSession();
@@ -164,11 +249,12 @@ export function FeedbackScreen({ clientId }: { clientId: string }) {
   const { data, error, loading, reload } = useApi<{ feedback: Feedback[] }>(`/clients/${clientId}/feedback`);
   return (
     <>
-      <PageHead a="Vos" b="retours" sub="Un bug, un résultat qui vous déçoit, une demande, une question : écrivez-nous ici, nous répondons dans cet espace." />
+      <PageHead a="Vos" b="retours" sub="Un bug, un résultat qui vous déçoit, une demande, une question : décrivez-le ici, avec vos captures ou documents. Obsidian Partners traite votre demande et vous suivez son avancement ci-dessous." />
       {isClient && <FeedbackForm clientId={clientId} onDone={reload} />}
       {error && <ErrorBox error={error} />}
       {loading && !data && <Loading />}
-      {data && data.feedback.length === 0 && <EmptyState title="Aucun retour pour le moment">{isClient ? 'Vos retours et nos réponses apparaîtront ici.' : 'Le client n’a encore envoyé aucun retour.'}</EmptyState>}
+      {data && data.feedback.length === 0 && <EmptyState title="Aucun retour pour le moment">{isClient ? 'Vos demandes et leur avancement apparaîtront ici.' : 'Le client n’a encore envoyé aucun retour.'}</EmptyState>}
+      {data && data.feedback.length > 0 && <h3 style="margin:18px 0 8px">{isClient ? 'Vos demandes' : 'Retours du client'}</h3>}
       <div class="grid" style="gap:10px">
         {data?.feedback.map((f) => <FeedbackCard clientId={clientId} f={f} agency={agency} onChange={reload} />)}
       </div>
@@ -177,38 +263,90 @@ export function FeedbackScreen({ clientId }: { clientId: string }) {
 }
 
 function FeedbackForm({ clientId, onDone }: { clientId: string; onDone: () => void }) {
-  const [category, setCategory] = useState('question');
+  const [category, setCategory] = useState('demande');
   const [severity, setSeverity] = useState('normale');
   const [body, setBody] = useState('');
-  const [links, setLinks] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  function addFiles(list: FileList | null) {
+    if (!list) return;
+    const next = [...files, ...Array.from(list)];
+    const bad = next.find((f) => !ACCEPT.split(',').includes(f.type));
+    if (bad) { setMsg({ ok: false, text: `« ${bad.name} » : format non accepté (image, PDF ou vidéo MP4 / MOV).` }); return; }
+    const big = next.find((f) => f.size > 25 * 1024 * 1024);
+    if (big) { setMsg({ ok: false, text: `« ${big.name} » dépasse 25 Mo. Pour une vidéo plus longue, collez son lien dans la description.` }); return; }
+    if (next.length > 5) { setMsg({ ok: false, text: '5 pièces jointes au plus.' }); return; }
+    setMsg(null); setFiles(next);
+  }
   async function send(e: Event) {
-    e.preventDefault(); setMsg(null);
+    e.preventDefault(); setMsg(null); setBusy(true);
     try {
-      await api(`/clients/${clientId}/feedback`, { method: 'POST', body: JSON.stringify({ category, severity, body, links: links.split(/\s+/).filter(Boolean) }) });
-      setBody(''); setLinks(''); setMsg({ ok: true, text: 'Retour envoyé. Nous vous répondons ici.' }); onDone();
-    } catch (x) { setMsg({ ok: false, text: (x as ApiError).message }); }
+      const r = await api<{ id: string }>(`/clients/${clientId}/feedback`, { method: 'POST', body: JSON.stringify({ category, severity, body }) });
+      const failed: string[] = [];
+      for (const [i, f] of files.entries()) {
+        setMsg({ ok: true, text: `Envoi des pièces jointes (${i + 1}/${files.length})…` });
+        try { await api(`/clients/${clientId}/feedback/${r.id}/files`, { method: 'PUT', body: f, headers: { 'Content-Type': f.type, 'X-File-Name': encodeURIComponent(f.name).slice(0, 300) } }); }
+        catch (x) { failed.push(`${f.name} (${(x as ApiError).message})`); }
+      }
+      setBody(''); setFiles([]);
+      setMsg(failed.length ? { ok: false, text: `Demande envoyée, mais ces pièces jointes n'ont pas pu être ajoutées : ${failed.join(' · ')}` } : { ok: true, text: 'Demande envoyée. Vous suivez son avancement ci-dessous.' });
+      onDone();
+    } catch (x) { setMsg({ ok: false, text: (x as ApiError).message }); } finally { setBusy(false); }
   }
   return (
-    <form class="card section" style="display:flex;flex-direction:column;gap:10px" onSubmit={send}>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <Segmented label="Catégorie" value={category} onChange={setCategory} options={Object.entries(CAT).map(([value, label]) => ({ value, label }))} />
-        <Segmented label="Gravité" value={severity} onChange={setSeverity} options={Object.entries(SEV).map(([value, label]) => ({ value, label }))} />
+    <form class="card section" style="display:flex;flex-direction:column;gap:12px" onSubmit={send}>
+      <div>
+        <div class="label" style="margin-bottom:6px">Type de demande</div>
+        <Segmented label="Type de demande" value={category} onChange={setCategory} options={Object.entries(CAT).map(([value, label]) => ({ value, label }))} />
+        <div class="small muted" style="margin-top:4px">{CAT_HINT[category]}</div>
       </div>
-      <textarea rows={4} required minLength={5} maxLength={5000} value={body} placeholder="Décrivez ce que vous constatez, et depuis quand." onInput={(e) => setBody((e.target as HTMLTextAreaElement).value)} aria-label="Description" />
-      <input type="text" value={links} placeholder="Pièces jointes : liens https (capture, vidéo, document), séparés par un espace" onInput={(e) => setLinks((e.target as HTMLInputElement).value)} aria-label="Liens vers des pièces jointes" />
-      <div style="display:flex;gap:10px;align-items:center">
-        <button class="btn" type="submit" disabled={body.trim().length < 5}>Envoyer</button>
+      <div>
+        <div class="label" style="margin-bottom:6px">Urgence</div>
+        <Segmented label="Urgence" value={severity} onChange={setSeverity} options={Object.entries(SEV).map(([value, label]) => ({ value, label }))} />
+        <div class="small muted" style="margin-top:4px">{SEV_HINT[severity]}</div>
+      </div>
+      <label class="field">Description
+        <textarea rows={5} required minLength={5} maxLength={5000} value={body} placeholder="Ce que vous constatez ou souhaitez, où, et depuis quand. Un lien vers une page ou une vidéo peut être collé ici." onInput={(e) => setBody((e.target as HTMLTextAreaElement).value)} />
+      </label>
+      <div>
+        <div class="label" style="margin-bottom:6px">Pièces jointes (facultatif)</div>
+        <label class="ghost-btn" style="cursor:pointer;display:inline-block">Ajouter des fichiers
+          <input type="file" multiple accept={ACCEPT} style="display:none" disabled={busy} onChange={(e) => { addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ''; }} />
+        </label>
+        <span class="small muted" style="margin-left:8px">Captures, PDF ou vidéos courtes · 5 fichiers, 25 Mo chacun</span>
+        {files.length > 0 && (
+          <ul class="small" style="margin:8px 0 0;padding-left:18px">
+            {files.map((f, i) => <li>{f.name} · {sizeLabel(f.size)} <button type="button" class="ghost-btn small" onClick={() => setFiles(files.filter((_, j) => j !== i))}>Retirer</button></li>)}
+          </ul>
+        )}
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn" type="submit" disabled={busy || body.trim().length < 5}>{busy ? 'Envoi…' : 'Envoyer la demande'}</button>
         {msg && <span class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }}>{msg.text}</span>}
       </div>
     </form>
   );
 }
 
+function Attachments({ clientId, f }: { clientId: string; f: Feedback }) {
+  const [err, setErr] = useState<string | null>(null);
+  if (!f.attachments.length) return null;
+  return (
+    <div class="small" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0">
+      <span class="muted">Pièces jointes :</span>
+      {f.attachments.map((a, i) => a.url
+        ? <a href={a.url} target="_blank" rel="noopener noreferrer">Lien {i + 1} ↗</a>
+        : <button class="ghost-btn small" onClick={() => openFile(`/clients/${clientId}/feedback/${f.id}/files/${a.index}`).catch((x) => setErr((x as Error).message))}>{a.name} · {sizeLabel(a.size)}</button>)}
+      {err && <span style="color:var(--alert)">{err}</span>}
+    </div>
+  );
+}
+
 function FeedbackCard({ clientId, f, agency, onChange }: { clientId: string; f: Feedback; agency: boolean; onChange: () => void }) {
   const [reply, setReply] = useState(f.reply ?? '');
   const [open, setOpen] = useState(false);
-  const [label, kind] = STAT[f.status] ?? [f.status, 'neutral'];
+  const [label, kind] = (agency ? STAT_AGENCY : STAT_CLIENT)[f.status] ?? [f.status, 'neutral'];
   async function patch(body: Record<string, unknown>) {
     await api(`/clients/${clientId}/feedback/${f.id}`, { method: 'PATCH', body: JSON.stringify(body) });
     onChange();
@@ -217,13 +355,13 @@ function FeedbackCard({ clientId, f, agency, onChange }: { clientId: string; f: 
   return (
     <article class="card edge" style={{ '--edge': f.severity === 'haute' ? 'var(--alert)' : f.severity === 'normale' ? 'var(--warn)' : 'var(--border)' }}>
       <div class="kpi-row">
-        <span class="label">{CAT[f.category]} · gravité {SEV[f.severity].toLowerCase()} · {formatDateTime(f.createdAt)}</span>
+        <span class="label">{CAT[f.category]} · {SEV[f.severity].toLowerCase()} · {formatDateTime(f.createdAt)}</span>
         <Pill kind={kind}>{label}</Pill>
       </div>
       <p style="white-space:pre-wrap;margin:8px 0">{f.body}</p>
-      {f.attachments.length > 0 && <div class="small">{f.attachments.map((a, i) => <a href={a.url} target="_blank" rel="noopener noreferrer" style="margin-right:10px">Pièce jointe {i + 1} ↗</a>)}</div>}
+      <Attachments clientId={clientId} f={f} />
       {f.reply && !agency && (
-        <div class="card" style="margin-top:8px;background:var(--surface-2)"><span class="label">Réponse d'Obsidian Partners · {formatDateTime(f.repliedAt)}</span><p style="white-space:pre-wrap;margin:6px 0 0">{f.reply}</p></div>
+        <div class="card" style="margin-top:8px;background:var(--surface-2)"><span class="label">Note d'Obsidian Partners · {formatDateTime(f.repliedAt)}</span><p style="white-space:pre-wrap;margin:6px 0 0">{f.reply}</p></div>
       )}
       {agency && (
         <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;color:var(--agency)" class="small">
@@ -238,12 +376,12 @@ function FeedbackCard({ clientId, f, agency, onChange }: { clientId: string; f: 
               <p class="small" style="margin:6px 0">Dernières recommandations : {f.context.recommendations.map((r) => `${formatDate(r.date)} ${r.title} (${r.state})`).join(' · ') || DASH}</p>
             </div>
           )}
-          <textarea rows={3} value={reply} placeholder="Réponse au client (visible dans son espace)" onInput={(e) => setReply((e.target as HTMLTextAreaElement).value)} aria-label="Réponse" />
+          <textarea rows={2} value={reply} placeholder="Note au client, facultative (ex. « corrigé le 14 nov. ») : visible dans son espace, il ne peut pas y répondre" onInput={(e) => setReply((e.target as HTMLTextAreaElement).value)} aria-label="Note au client" />
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            {reply !== (f.reply ?? '') && <button class="btn" onClick={() => patch({ reply })}>Envoyer la réponse</button>}
+            {reply !== (f.reply ?? '') && <button class="btn" onClick={() => patch({ reply })}>Enregistrer la note</button>}
             {f.status === 'nouveau' && <button class="ghost-btn" onClick={() => patch({ status: 'vu' })}>Marquer vu</button>}
             {f.status !== 'en_cours' && f.status !== 'resolu' && <button class="ghost-btn" onClick={() => patch({ status: 'en_cours' })}>En cours</button>}
-            {f.status !== 'resolu' ? <button class="ghost-btn" onClick={() => patch({ status: 'resolu' })}>Résolu</button> : <button class="ghost-btn" onClick={() => patch({ status: 'en_cours' })}>Rouvrir</button>}
+            {f.status !== 'resolu' ? <button class="ghost-btn" onClick={() => patch({ status: 'resolu' })}>Traité</button> : <button class="ghost-btn" onClick={() => patch({ status: 'en_cours' })}>Rouvrir</button>}
           </div>
         </div>
       )}

@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
-import { addDaysYmd, bucketStart, delta, derived, todayParis, type Totals } from '@obsidian/domain';
+import { addDaysYmd, bucketStart, delta, derived, todayParis, unmeasuredReason, type Totals } from '@obsidian/domain';
 import type { AppEnv } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { scopeClient } from '../scope.ts';
 import { all, audit, first, newId, nowIso } from '../db.ts';
 import { HttpError, forbidden, notFound } from '../errors.ts';
-import { clientTotals, lastSuccessfulSync } from '../metrics.ts';
+import { clientTotals, dailySeries, entityTotals, lastSuccessfulSync } from '../metrics.ts';
+import { appointmentRates, type Appt } from './pilotage.ts';
 import { safeJson } from '../serialize.ts';
 
 /**
@@ -97,14 +98,58 @@ reports.post('/:clientId/reports', async (c) => {
     const current = um || !cur ? null : cur[r.key];
     const previous = um || !prev ? null : prev[r.key];
     return { key: r.key, label: r.label, money: Boolean(r.money), current, previous, delta: delta(current, previous),
-      reason: um ? 'Non synchronisé pour ce client' : !cur ? 'Aucune donnée sur la période' : null };
+      reason: um ? unmeasuredReason(r.key) : !cur ? 'Aucune donnée sur la période' : null };
   });
   const dcur = cur ? derived(cur) : null;
+  const dprev = prev ? derived(prev) : null;
+
+  // Ratios (période / précédente) : un ratio dont une mesure manque chez ce client vaut « — » avec sa raison.
+  const appts = await all<Appt>(db, 'SELECT booked_at, scheduled_at, status FROM appointments WHERE client_id = ?1 AND counts_toward_target = 1', client.id);
+  const rCur = appointmentRates(appts, p.start, to), rPrev = appointmentRates(appts, p.prevStart, p.prevEnd);
+  const crmUm = unmeasured.has('appointments_booked');
+  const RATIOS: { key: string; label: string; format: 'euros' | 'percent' | 'ratio'; deps: string[]; higherIsBetter: boolean;
+    pick: (d: ReturnType<typeof derived> | null, r: typeof rCur) => number | null; why?: (r: typeof rCur) => string | null }[] = [
+    { key: 'ctr', label: 'CTR (clics / impressions)', format: 'percent', deps: [], higherIsBetter: true, pick: (d) => d?.ctr ?? null },
+    { key: 'cpc_cents', label: 'Coût par clic', format: 'euros', deps: [], higherIsBetter: false, pick: (d) => d?.cpc_cents ?? null },
+    { key: 'cpm_cents', label: 'CPM (coût pour 1 000 impressions)', format: 'euros', deps: [], higherIsBetter: false, pick: (d) => d?.cpm_cents ?? null },
+    { key: 'cost_per_lead_cents', label: 'Coût par lead', format: 'euros', deps: [], higherIsBetter: false, pick: (d) => d?.cost_per_lead_cents ?? null },
+    { key: 'cost_per_booked_cents', label: 'Coût par rendez-vous', format: 'euros', deps: ['appointments_booked'], higherIsBetter: false, pick: (d) => d?.cost_per_booked_cents ?? null },
+    { key: 'show_rate', label: 'Taux de présence', format: 'percent', deps: ['appointments_held'], higherIsBetter: true, pick: (_d, r) => r.show_rate, why: (r) => r.reasonShow },
+    { key: 'cac_cents', label: "Coût d'acquisition client", format: 'euros', deps: ['sales'], higherIsBetter: false, pick: (d) => d?.cac_cents ?? null },
+    { key: 'roas_cash', label: 'ROAS encaissé', format: 'ratio', deps: ['cash_collected_cents'], higherIsBetter: true, pick: (d) => d?.roas_cash ?? null },
+  ];
+  const ratioRows = RATIOS.map((x) => {
+    const missing = x.deps.find((d) => unmeasured.has(d));
+    if (missing) return { key: x.key, label: x.label, format: x.format, higherIsBetter: x.higherIsBetter, current: null, previous: null, delta: null, reason: unmeasuredReason(missing) };
+    const current = x.pick(dcur, rCur), previous = x.pick(dprev, rPrev);
+    return { key: x.key, label: x.label, format: x.format, higherIsBetter: x.higherIsBetter, current, previous, delta: delta(current, previous),
+      reason: current == null ? (x.why?.(rCur) ?? (!cur ? 'Aucune donnée sur la période' : 'Dénominateur nul sur la période')) : null };
+  });
+
+  // Évolution par jour, campagnes et publicités de la période (hors lignes de saisie manuelle).
+  const PSEUDO = new Set(['saisie_manuelle', 'encaissement_manuel']);
+  const [series, camps, ads] = await Promise.all([
+    dailySeries(db, client.id, p.start, to),
+    entityTotals(db, client.id, 'campaign', p.start, to),
+    entityTotals(db, client.id, 'ad', p.start, to),
+  ]);
+  const entity = (e: Totals & { entity_id: string; entity_name: string | null }) => ({
+    id: e.entity_id, name: e.entity_id === 'non_rattache' ? 'Non rattaché à une campagne' : e.entity_name ?? e.entity_id,
+    spend_cents: e.spend_cents, impressions: e.impressions, link_clicks: e.link_clicks, leads: e.leads,
+    appointments_booked: crmUm ? null : e.appointments_booked,
+    cost_per_booked_cents: crmUm ? null : derived(e).cost_per_booked_cents, cost_per_lead_cents: derived(e).cost_per_lead_cents, ctr: derived(e).ctr,
+  });
+  const campaigns = camps.filter((e) => !PSEUDO.has(e.entity_id) && (e.spend_cents > 0 || e.appointments_booked > 0)).slice(0, 12).map(entity);
+  const topAds = ads.filter((e) => !PSEUDO.has(e.entity_id) && !e.entity_id.startsWith('campagne:') && e.entity_id !== 'non_rattache' && e.spend_cents > 0).slice(0, 8).map(entity);
   const snapshot = {
     client: { name: client.name, currency: client.ad_account_currency },
     period: { type: b.periodType, from: p.start, to, fullTo: p.end, partial: to < p.end, previousFrom: p.prevStart, previousTo: p.prevEnd },
     rows,
     ratios: dcur && { cost_per_booked_cents: unmeasured.has('appointments_booked') ? null : dcur.cost_per_booked_cents, cost_per_lead_cents: dcur.cost_per_lead_cents },
+    ratioRows,
+    series: series.map((d) => ({ date: d.date, spend_cents: d.spend_cents, leads: d.leads, appointments_booked: crmUm ? null : d.appointments_booked })),
+    crmMeasured: !crmUm,
+    campaigns, topAds,
     lastSync: sync, generatedAt: nowIso(),
   };
   const lines: string[] = [];
@@ -163,9 +208,14 @@ interface FeedbackRow {
   context_json: string | null; status: string; agency_reply: string | null; replied_at: string | null; created_at: string; updated_at: string;
 }
 
+/** Pièce jointe : lien https (anciens retours) ou fichier déposé dans R2 (la clé R2 ne sort jamais de l'API). */
+interface Attachment { url?: string; file?: { key: string; name: string; type: string; size: number } }
+const attachmentsOf = (f: FeedbackRow) => ((safeJson(f.attachments_json) as Attachment[] | null) ?? []);
+
 function serializeFeedback(f: FeedbackRow, view: 'agence' | 'client') {
   return {
-    id: f.id, category: f.category, severity: f.severity, body: f.body, attachments: safeJson(f.attachments_json) ?? [],
+    id: f.id, category: f.category, severity: f.severity, body: f.body,
+    attachments: attachmentsOf(f).map((a, i) => a.file ? { index: i, name: a.file.name, type: a.file.type, size: a.file.size } : { index: i, url: a.url }),
     status: f.status, reply: f.agency_reply, repliedAt: f.replied_at, createdAt: f.created_at,
     ...(view === 'agence' ? { context: safeJson(f.context_json) } : {}),
   };
@@ -232,4 +282,65 @@ reports.patch('/:clientId/feedback/:feedbackId', async (c) => {
   await db.prepare('UPDATE feedback SET status = ?1, agency_reply = ?2, replied_at = ?3, updated_at = ?4 WHERE id = ?5').bind(status, reply, repliedAt, now, f.id).run();
   await audit(db, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'retour_traite', objectType: 'feedback', objectId: f.id, before: { status: f.status }, after: { status, replied: Boolean(reply) } });
   return c.json({ ok: true, status });
+});
+
+// ─── Pièces jointes des retours (fichiers dans R2, décision 0015) ─────────────────
+
+const MAX_FILE = 25 * 1024 * 1024;
+const MAX_ATTACHMENTS = 5;
+/** Types acceptés, vérifiés aussi par la signature du fichier (le type annoncé ne suffit pas). */
+const FILE_TYPES: Record<string, (b: Uint8Array) => boolean> = {
+  'image/png': (b) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
+  'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/gif': (b) => b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46,
+  'image/webp': (b) => String.fromCharCode(...b.slice(0, 4)) === 'RIFF' && String.fromCharCode(...b.slice(8, 12)) === 'WEBP',
+  'application/pdf': (b) => String.fromCharCode(...b.slice(0, 5)) === '%PDF-',
+  'video/mp4': (b) => String.fromCharCode(...b.slice(4, 8)) === 'ftyp',
+  'video/quicktime': (b) => String.fromCharCode(...b.slice(4, 8)) === 'ftyp' || String.fromCharCode(...b.slice(4, 8)) === 'moov',
+};
+
+/** Le client joint un fichier à SON retour, dans l'heure qui suit l'envoi (5 pièces jointes au plus). */
+reports.put('/:clientId/feedback/:feedbackId/files', async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'client') throw forbidden('Les pièces jointes sont déposées par le client.');
+  if (!c.env.FILES) throw new HttpError(503, 'Stockage de fichiers non activé.');
+  const client = c.get('client');
+  const f = await first<FeedbackRow>(c.env.DB, 'SELECT * FROM feedback WHERE id = ?1 AND client_id = ?2', c.req.param('feedbackId'), client.id);
+  if (!f || f.author_user_id !== user.id) throw notFound();
+  if (Date.parse(f.created_at) < Date.now() - 3_600_000) throw new HttpError(409, 'Les pièces jointes s’ajoutent au moment de l’envoi du retour.');
+  const list = attachmentsOf(f);
+  if (list.length >= MAX_ATTACHMENTS) throw new HttpError(409, `${MAX_ATTACHMENTS} pièces jointes au plus.`);
+  const type = (c.req.header('Content-Type') ?? '').split(';')[0].trim().toLowerCase();
+  if (!FILE_TYPES[type]) throw new HttpError(400, 'Format non accepté : image (PNG, JPEG, GIF, WebP), PDF ou vidéo (MP4, MOV).');
+  if (Number(c.req.header('Content-Length') ?? 0) > MAX_FILE) throw new HttpError(413, 'Fichier trop lourd (25 Mo au plus).');
+  const buf = await c.req.arrayBuffer();
+  if (!buf.byteLength) throw new HttpError(400, 'Fichier vide.');
+  if (buf.byteLength > MAX_FILE) throw new HttpError(413, 'Fichier trop lourd (25 Mo au plus).');
+  if (!FILE_TYPES[type](new Uint8Array(buf.slice(0, 16)))) throw new HttpError(400, 'Le contenu du fichier ne correspond pas à son format.');
+  let name = 'piece-jointe';
+  try { name = decodeURIComponent(c.req.header('X-File-Name') ?? name); } catch { /* nom par défaut */ }
+  name = name.replace(/[^\p{L}\p{N}._\- ]+/gu, '_').slice(0, 100) || 'piece-jointe';
+  const key = `feedback/${client.id}/${f.id}/${Date.now()}-${list.length}`;
+  await c.env.FILES.put(key, buf, { httpMetadata: { contentType: type } });
+  list.push({ file: { key, name, type, size: buf.byteLength } });
+  await c.env.DB.prepare('UPDATE feedback SET attachments_json = ?1, updated_at = ?2 WHERE id = ?3').bind(JSON.stringify(list), nowIso(), f.id).run();
+  return c.json({ ok: true, index: list.length - 1 }, 201);
+});
+
+/** Lecture d'une pièce jointe : le client auteur (son espace) et l'agence ; mêmes droits que le retour. */
+reports.get('/:clientId/feedback/:feedbackId/files/:index', async (c) => {
+  const client = c.get('client');
+  const f = await first<FeedbackRow>(c.env.DB, 'SELECT * FROM feedback WHERE id = ?1 AND client_id = ?2', c.req.param('feedbackId'), client.id);
+  if (!f) throw notFound();
+  const a = attachmentsOf(f)[Number(c.req.param('index'))];
+  if (!a?.file) throw notFound();
+  if (!c.env.FILES) throw new HttpError(503, 'Stockage de fichiers non activé.');
+  const obj = await c.env.FILES.get(a.file.key);
+  if (!obj) throw notFound();
+  const inline = a.file.type.startsWith('image/') || a.file.type === 'application/pdf' || a.file.type.startsWith('video/');
+  return new Response(obj.body, { headers: {
+    'content-type': a.file.type,
+    'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(a.file.name)}`,
+    'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; img-src 'self'; media-src 'self'; sandbox",
+  } });
 });
