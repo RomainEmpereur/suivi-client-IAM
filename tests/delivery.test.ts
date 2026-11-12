@@ -10,7 +10,7 @@ const patch = (call: any, client: string, key: string, body: unknown, as = AGENC
   call(`/clients/${client}/delivery/${key}`, { as, method: 'PATCH', body });
 const deposit = (call: any, client: string, key: string, body: unknown) =>
   call(`/robot/clients/${client}/delivery/${key}`, { method: 'PUT', body, headers: robotHeaders });
-const CHAIN = ['s0', 's1a', 's1b', 's1c', 's2', 's3', 's4', 's5', 's6', 's7'];
+const CHAIN = ['s0', 's1a', 's1b', 's1c', 's2', 's3', 's4', 's5', 's6', 's7', 's9'];
 
 /** Lance le delivery et fait rédiger toute la chaîne par la « génération ». */
 async function generateAll(call: any) {
@@ -41,10 +41,10 @@ describe('Delivery : conditions de lancement', () => {
 });
 
 describe('Delivery : génération de toute la chaîne', () => {
-  it('le lancement met les étapes 0 à 7 en file, dans l’ordre, sans le point hebdomadaire', async () => {
+  it('le lancement met les étapes 0 à 7 puis 9 en file, dans l’ordre, sans le point hebdomadaire', async () => {
     const { call } = boot();
     const r = await call(`/clients/${B}/delivery/launch`, { as: AGENCE, method: 'POST' });
-    expect(((await r.json()) as any).queued).toBe(10);
+    expect(((await r.json()) as any).queued).toBe(11);
     const q = (await (await call('/robot/delivery/queue', { headers: robotHeaders })).json()) as any;
     expect(q.items.map((i: any) => i.step)).toEqual(CHAIN);
     // Relancer ne duplique rien.
@@ -64,7 +64,7 @@ describe('Delivery : génération de toute la chaîne', () => {
     expect(brief.brief).toContain('La Méthode Pilote');
     expect(brief.brief).toContain("## 2. Les règles d'or");
     expect(brief.brief).toContain('Visuels de la VSL');
-    expect(brief.brief).toContain('## 13. Garde-fous');
+    expect(brief.brief).toContain('## 14. Garde-fous');
     expect(brief.brief).toContain('Texte s1b');
     expect(brief.brief).toContain('Les 8 blocs');
     const d = await get(call, B);
@@ -130,13 +130,13 @@ describe('Delivery : relecture, validation, publication au client', () => {
     await generateAll(call);
     await patch(call, B, 's1b', { contentMd: 'Offre corrigée' });
     const d = await get(call, B);
-    expect(d.steps.filter((s: any) => s.stale).map((s: any) => s.key)).toEqual(['s1c', 's2', 's3', 's4', 's5', 's6', 's7']);
+    expect(d.steps.filter((s: any) => s.stale).map((s: any) => s.key)).toEqual(['s1c', 's2', 's3', 's4', 's5', 's6', 's7', 's9']);
     expect((await patch(call, B, 's2', { status: 'valide' })).status).toBe(409);
     // Garder tel quel.
     expect((await patch(call, B, 's1c', { stale: false })).status).toBe(200);
     // Reprendre le reste.
     const r = await call(`/clients/${B}/delivery/regenerate-stale`, { as: AGENCE, method: 'POST' });
-    expect(((await r.json()) as any).queued).toBe(6);
+    expect(((await r.json()) as any).queued).toBe(7);
     await deposit(call, B, 's2', { contentMd: 'VSL refaite' });
     expect(await step(call, B, 's2')).toMatchObject({ stale: false, queued: false, contentVersion: 2 });
     // Changer le mécanisme : les pièces qui le citent passent à revoir.
@@ -168,7 +168,21 @@ describe('Delivery : relecture, validation, publication au client', () => {
     await deposit(call, B, 's8', { contentMd: 'Point de la semaine' });
     expect((await patch(call, B, 's8', { status: 'valide' })).status).toBe(409);
   });
+  it("l'étape 9 joint l'état des connexions et ne se valide qu'avec Meta et GoHighLevel opérationnels", async () => {
+    const { call, raw } = boot();
+    await generateAll(call);
+    const brief = ((await (await call(`/robot/clients/${B}/delivery/s9/brief`, { headers: robotHeaders })).json()) as any).brief;
+    expect(brief).toContain("## État des connexions dans l'espace");
+    expect(brief).toContain('12. Étape 9 — Tracking et connexions');
+    raw.prepare(`DELETE FROM connections WHERE client_id = ?`).run(B);
+    const res = await patch(call, B, 's9', { status: 'valide' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).error ?? '').toMatch(/Connexions pas encore opérationnelles/);
+    for (const t of ['meta', 'ghl']) raw.prepare(`INSERT INTO connections (id, client_id, type, state) VALUES (?, ?, ?, 'ok')`).run(`cn_t_${t}`, B, t);
+    expect((await patch(call, B, 's9', { status: 'valide' })).status).toBe(200);
+  });
 });
+
 
 describe('Delivery : accès', () => {
   it('refusé au client et à la vue client ; un autre client est introuvable', async () => {

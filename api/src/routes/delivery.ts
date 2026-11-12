@@ -43,14 +43,16 @@ const MAX_INSTRUCTION = 2_000;
 async function loadState(db: D1Database, clientId: string) {
   const client = await first<ClientRow>(db, 'SELECT * FROM clients WHERE id = ?1', clientId);
   if (!client) throw notFound();
-  const [answerRows, stepRows] = await Promise.all([
+  const [answerRows, stepRows, connections] = await Promise.all([
     all<{ question_key: string; answer: string | null }>(db, 'SELECT question_key, answer FROM onboarding_answers WHERE client_id = ?1', clientId),
     all<StepRow>(db, 'SELECT * FROM delivery_steps WHERE client_id = ?1', clientId),
+    all<{ type: string; state: string; external_id: string | null; last_checked_at: string | null; error_message: string | null }>(db,
+      'SELECT type, state, external_id, last_checked_at, error_message FROM connections WHERE client_id = ?1', clientId),
   ]);
   const answers = Object.fromEntries(answerRows.map((a) => [a.question_key, a.answer]));
   const gate = deliveryGate(client.onboarding_submitted_at ?? null, answers);
   const byStep = new Map(stepRows.map((r) => [r.step, r]));
-  return { client, answers, gate, byStep, mechanism: client.delivery_mechanism ?? null };
+  return { client, answers, gate, byStep, connections, mechanism: client.delivery_mechanism ?? null };
 }
 type State = Awaited<ReturnType<typeof loadState>>;
 
@@ -69,7 +71,7 @@ function serializeStep(s: DeliveryStep, st: State) {
     instruction: row?.instruction ?? null, stale: Boolean(row?.stale), lastError: row?.last_error ?? null,
     integrations: s.key === 's3' ? parseIntegrations(row?.integrations_json) : null,
     available: a.available, lockedReason: a.reason,
-    validationBlocker: validationBlocker(s, { hasContent: hasContent(row), mechanism: st.mechanism, stale: Boolean(row?.stale) }),
+    validationBlocker: validationBlocker(s, { hasContent: hasContent(row), mechanism: st.mechanism, stale: Boolean(row?.stale), connections: st.connections }),
   };
 }
 
@@ -150,6 +152,7 @@ function buildBrief(step: DeliveryStep, st: State, weekly: string | null): strin
   out.push('');
 
   if (weekly) { out.push(weekly); out.push(''); }
+  if (step.checksConnections) { out.push(connectionsBlock(st)); out.push(''); }
 
   out.push("## Réponses d'onboarding (mots du client, à reprendre tels quels)");
   for (const section of ONBOARDING_SECTIONS) {
@@ -185,6 +188,23 @@ function buildBrief(step: DeliveryStep, st: State, weekly: string | null): strin
       : 'Propose les trois noms de mécanisme demandés et indique celui que tu recommandes : il sera retenu pour toute la suite (l\'agence pourra le changer).');
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}
+
+const CONNECTION_LABEL: Record<string, string> = {
+  meta: 'Compte publicitaire Meta', pixel: 'Pixel', ghl: 'Sous-compte GoHighLevel', calendrier: 'Calendrier',
+  domaine: 'Domaine de la landing', mailing: "Domaine d'envoi des emails", formulaire: 'Formulaire instantané',
+};
+const CONNECTION_STATE: Record<string, string> = { ok: 'opérationnelle', degrade: 'dégradée', casse: 'en erreur', non_configure: 'non configurée' };
+
+/** Étape 9 : l'état des connexions tel que l'espace le connaît (aucun jeton, aucune donnée personnelle). */
+function connectionsBlock(st: State): string {
+  const lines = ["## État des connexions dans l'espace", '| Connexion | Identifiant | État | Dernier contrôle | Erreur |', '|---|---|---|---|---|'];
+  for (const type of Object.keys(CONNECTION_LABEL)) {
+    const cn = st.connections.find((x) => x.type === type);
+    lines.push(`| ${CONNECTION_LABEL[type]} | ${cn?.external_id ?? '—'} | ${cn ? CONNECTION_STATE[cn.state] ?? cn.state : 'absente de l\'espace'} | ${cn?.last_checked_at ? formatDate(cn.last_checked_at, { year: true }) : '—'} | ${cn?.error_message?.replace(/\|/g, '/') ?? '—'} |`);
+  }
+  lines.push("Seuls Meta et GoHighLevel sont testés par l'espace ; les autres lignes se vérifient à la main pendant la recette.");
+  return lines.join('\n');
 }
 
 /** Étape 8 : la semaine écoulée contre la précédente, depuis metrics_rollup. Aucune mesure → « — », jamais 0. */
@@ -383,7 +403,7 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
       const content = 'contentMd' in body ? readContent(body.contentMd) : row?.content_md ?? null;
       const url = 'resultUrl' in body ? (changes.resultUrl as string | null) : row?.result_url ?? null;
       const stale = body.stale === false ? false : Boolean(row?.stale) && !('contentMd' in body && content !== row?.content_md);
-      const blocker = validationBlocker(step, { hasContent: Boolean(content?.trim() || url), mechanism, stale });
+      const blocker = validationBlocker(step, { hasContent: Boolean(content?.trim() || url), mechanism, stale, connections: st.connections });
       if (blocker) throw new HttpError(409, blocker);
       if (row?.queued_at && body.regenerate !== true) throw new HttpError(409, 'Claude est en train de reprendre cette pièce : attendez la nouvelle version.');
       stmts.push(db.prepare(`UPDATE delivery_steps SET status = 'valide', validated_at = ?1, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, step.key));

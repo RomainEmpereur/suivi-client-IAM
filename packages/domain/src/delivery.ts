@@ -19,6 +19,8 @@ export interface DeliveryStep {
   needsMechanism: boolean;
   /** Point récurrent (étape 8) : jamais « validé », brief disponible chaque semaine. */
   recurring?: boolean;
+  /** Étape 9 : ne se valide qu'avec les connexions vérifiables par l'espace au vert. */
+  checksConnections?: boolean;
 }
 
 export const DELIVERY_STEPS: DeliveryStep[] = [
@@ -33,6 +35,8 @@ export const DELIVERY_STEPS: DeliveryStep[] = [
   { key: 's6', label: '6 · Formulaire Meta et calendrier', heading: '9. Étape 6 — Formulaire Meta et calendrier', deliverable: { type: 'tracking', phase: 'recette', title: 'Formulaire Meta et calendrier' }, needsMechanism: true },
   { key: 's7', label: '7 · La structure de campagne', heading: '10. Étape 7 — La structure de campagne', deliverable: { type: 'campagne', phase: 'lancement', title: 'Structure de campagne' }, needsMechanism: true },
   { key: 's8', label: '8 · Le point hebdomadaire', heading: '11. Étape 8 — Le point hebdomadaire', deliverable: null, needsMechanism: true, recurring: true },
+  // Fin de la chaîne, tenue avant toute publication : pixel, origine des leads, champs GHL, vérification des connexions.
+  { key: 's9', label: '9 · Tracking et connexions', heading: '12. Étape 9 — Tracking et connexions', deliverable: null, needsMechanism: false, checksConnections: true },
 ];
 export const DELIVERY_STEP_BY_KEY = new Map(DELIVERY_STEPS.map((s) => [s.key, s]));
 
@@ -64,7 +68,7 @@ export function deliveryGate(onboardingSubmittedAt: string | null, answers: Reco
   return { ok: missing.length === 0, missing };
 }
 
-/** Étapes rédigées d'un coup au lancement (0 à 7) ; le point hebdomadaire (8) se demande chaque semaine. */
+/** Étapes rédigées d'un coup au lancement (0 à 7, puis 9) ; le point hebdomadaire (8) se demande chaque semaine. */
 export const CHAIN_STEPS = DELIVERY_STEPS.filter((s) => !s.recurring).map((s) => s.key);
 
 /**
@@ -76,11 +80,24 @@ export function stepAvailability(_key: string, ctx: { gateOk: boolean }): { avai
   return { available: true, reason: null };
 }
 
-export function validationBlocker(step: DeliveryStep, ctx: { hasContent: boolean; mechanism: string | null; stale: boolean }): string | null {
+/** Connexions que l'espace vérifie lui-même (jeton testé, synchro du jour) : exigées au vert pour valider l'étape 9. */
+export const CONNECTIONS_REQUIRED_BEFORE_LAUNCH: { type: string; label: string }[] = [
+  { type: 'meta', label: 'Compte publicitaire Meta' },
+  { type: 'ghl', label: 'Sous-compte GoHighLevel' },
+];
+
+export function validationBlocker(
+  step: DeliveryStep,
+  ctx: { hasContent: boolean; mechanism: string | null; stale: boolean; connections?: { type: string; state: string }[] },
+): string | null {
   if (step.recurring) return 'Le point hebdomadaire est récurrent : il ne se valide pas.';
   if (!ctx.hasContent) return "Rien à valider : le livrable n'a pas encore de contenu.";
   if (ctx.stale) return 'Une étape en amont a changé : régénérez cette pièce ou gardez-la telle quelle avant de valider.';
   if ((step.needsMechanism || step.key === 's1c') && !ctx.mechanism) return 'Le nom du mécanisme n\'est pas fixé (étape 1C).';
+  if (step.checksConnections) {
+    const bad = CONNECTIONS_REQUIRED_BEFORE_LAUNCH.filter((r) => ctx.connections?.find((x) => x.type === r.type)?.state !== 'ok');
+    if (bad.length) return `Connexions pas encore opérationnelles : ${bad.map((b) => b.label).join(', ')}. La campagne ne se lance pas avant.`;
+  }
   return null;
 }
 
@@ -90,7 +107,7 @@ export function stepInstructions(step: DeliveryStep, md: string = MASTER_PROMPT)
 }
 
 /** Règles valables pour toutes les étapes, jointes à chaque brief : règles d'or et garde-fous du master prompt. */
-export const ALWAYS_SECTIONS = ["2. Les règles d'or", '13. Garde-fous'];
+export const ALWAYS_SECTIONS = ["2. Les règles d'or", '14. Garde-fous'];
 
 /** Une section du master prompt, de son titre au titre de même niveau suivant. */
 export function masterSection(heading: string, md: string = MASTER_PROMPT): string {
