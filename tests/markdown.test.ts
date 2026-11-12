@@ -18,3 +18,18 @@ describe('Rendu des livrables', () => {
     expect(html).toContain('&lt;script&gt;');
   });
 });
+
+describe('Vidéos intégrées', () => {
+  it('intègre Tella, Loom, YouTube, Vimeo ; tout autre hôte reste un simple lien', async () => {
+    const { renderMarkdown, videoEmbedUrl } = await import('../web/src/markdown.ts');
+    expect(videoEmbedUrl('https://www.tella.tv/video/training-setup-des-parametres-ghl-653p')).toBe('https://www.tella.tv/video/training-setup-des-parametres-ghl-653p/embed');
+    expect(videoEmbedUrl('https://www.loom.com/share/abc123')).toBe('https://www.loom.com/embed/abc123');
+    expect(videoEmbedUrl('https://youtu.be/xyz_1')).toBe('https://www.youtube-nocookie.com/embed/xyz_1');
+    expect(videoEmbedUrl('https://evil.example/video/x')).toBeNull();
+    expect(videoEmbedUrl('http://www.tella.tv/video/x')).toBeNull();
+    expect(renderMarkdown('@[Paramètres](https://www.tella.tv/video/abc)')).toContain('<iframe src="https://www.tella.tv/video/abc/embed"');
+    const other = renderMarkdown('@[x](https://evil.example/v)');
+    expect(other).not.toContain('<iframe');
+    expect(other).toContain('href="https://evil.example/v"');
+  });
+});

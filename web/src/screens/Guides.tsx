@@ -142,7 +142,7 @@ function GuideEditor({ g, onClose, onSaved }: { g: AgencyGuide | null; onClose: 
         ? <article class="card md-content guide" dangerouslySetInnerHTML={{ __html: renderMarkdown(body || '_Vide_') }} />
         : <textarea rows={22} value={body} onInput={(e) => setBody((e.target as HTMLTextAreaElement).value)} aria-label="Contenu"
             style="font-family:var(--font-mono);font-size:13px" placeholder={'## Étape 1 — ...\n1. Ouvrez ...\n\n![Capture](https://...)'} />}
-      <p class="small muted" style="margin:0">Mise en forme : « ## » pour un titre, « 1. » pour une étape, « - » pour une liste, **gras**, [lien](https://…), ![capture](https://…) pour une image hébergée (Drive public, Imgur…).</p>
+      <p class="small muted" style="margin:0">Mise en forme : « ## » pour un titre, « 1. » pour une étape, « - » pour une liste, **gras**, [lien](https://…), ![capture](https://…) pour une image hébergée (Drive public, Imgur…), et sur une ligne seule @[titre](lien) pour intégrer une vidéo Tella, Loom, YouTube ou Vimeo.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn" disabled={!title.trim()} onClick={() => save()}>Enregistrer</button>
         {g && (g.published

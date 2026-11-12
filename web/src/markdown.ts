@@ -14,6 +14,22 @@ function inline(raw: string): string {
   return s;
 }
 
+/** Lecteurs vidéo autorisés (liste fermée) : l'adresse publique est convertie en adresse d'intégration. */
+export function videoEmbedUrl(url: string): string | null {
+  let u: URL;
+  try { u = new URL(url); } catch { return null; }
+  if (u.protocol !== 'https:') return null;
+  const host = u.hostname.replace(/^www\./, '');
+  const seg = u.pathname.split('/').filter(Boolean);
+  const safe = (x: string | undefined) => (x && /^[\w-]+$/.test(x) ? x : null);
+  if (host === 'tella.tv' && seg[0] === 'video' && safe(seg[1])) return `https://www.tella.tv/video/${seg[1]}/embed`;
+  if (host === 'loom.com' && (seg[0] === 'share' || seg[0] === 'embed') && safe(seg[1])) return `https://www.loom.com/embed/${seg[1]}`;
+  if (host === 'youtube.com' && seg[0] === 'watch' && safe(u.searchParams.get('v') ?? undefined)) return `https://www.youtube-nocookie.com/embed/${u.searchParams.get('v')}`;
+  if (host === 'youtu.be' && safe(seg[0])) return `https://www.youtube-nocookie.com/embed/${seg[0]}`;
+  if (host === 'vimeo.com' && /^\d+$/.test(seg[0] ?? '')) return `https://player.vimeo.com/video/${seg[0]}`;
+  return null;
+}
+
 const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
 
 export function renderMarkdown(md: string): string {
@@ -26,6 +42,14 @@ export function renderMarkdown(md: string): string {
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) { const n = Math.min(h[1].length + 1, 6); out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push('<hr />'); i++; continue; }
+    const vid = line.trim().match(/^@\[([^\]]*)\]\((https:\/\/[^\s)]+)\)$/);
+    if (vid) {
+      const src = videoEmbedUrl(vid[2]);
+      out.push(src
+        ? `<div class="video"><iframe src="${esc(src)}" title="${esc(vid[1] || 'Vidéo')}" loading="lazy" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe></div>`
+        : `<p><a href="${esc(vid[2])}" target="_blank" rel="noopener noreferrer">${esc(vid[1] || vid[2])}</a></p>`);
+      i++; continue;
+    }
     if (line.trim().startsWith('|') && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
       const head = cells(line);
       i += 2;

@@ -334,3 +334,6 @@ tr.row-alert td { background: var(--alert-soft); }
 /* Guides : captures lisibles */
 .md-content img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; display: block; }
 .md-content.guide ol li { margin-bottom: 6px; }
+.md-content .video { position: relative; width: 100%; aspect-ratio: 16 / 9; margin: 10px 0 14px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: #000; }
+.md-content .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+@media print { .md-content .video { display: none; } }
