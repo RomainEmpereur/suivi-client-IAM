@@ -65,6 +65,12 @@ agency.get('/console', async (c) => {
   rows.sort((a, b) => Number(b.red) - Number(a.red)
     || (b.openFeedback + b.overdueClientTasks + b.openRecos) - (a.openFeedback + a.overdueClientTasks + a.openRecos));
 
+  // Retours récurrents (§11) : thèmes des 7 derniers jours et retours encore ouverts, tous clients confondus.
+  const ids = list.map((x) => x.id);
+  const themes = ids.length ? await all<{ category: string; recent: number; open: number; clients: string }>(db,
+    `SELECT f.category, SUM(f.created_at >= ?1) AS recent, SUM(f.status != 'resolu') AS open, GROUP_CONCAT(DISTINCT c.name) AS clients
+     FROM feedback f JOIN clients c ON c.id = f.client_id WHERE f.client_id IN (${ids.map((_, i) => `?${i + 2}`).join(',')})
+     GROUP BY f.category ORDER BY recent DESC, open DESC`, new Date(Date.now() - 7 * 86_400_000).toISOString(), ...ids) : [];
   const spend30 = rows.reduce((s, r) => s + (r.spend30_cents ?? 0), 0);
   const booked30 = rows.reduce((s, r) => s + (r.booked30 ?? 0), 0);
   return c.json({
@@ -74,5 +80,6 @@ agency.get('/console', async (c) => {
       clientsBehindPace: rows.filter((r) => r.counter && !r.counter.onPace).length,
     },
     rows,
+    feedbackThemes: themes.filter((t) => t.recent > 0 || t.open > 0).map((t) => ({ category: t.category, recent: t.recent, open: t.open, clients: (t.clients ?? '').split(',').filter(Boolean) })),
   });
 });

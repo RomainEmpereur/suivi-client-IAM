@@ -315,3 +315,18 @@ tr.warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 
 /* Pilotage : publicité qui a dépensé sans rendez-vous (§9 bloc 06) */
 tr.row-alert td { background: var(--alert-soft); }
+
+/* Rapport (§11) : écran et impression */
+.report-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.report-foot { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--border); }
+.print-only { display: none; }
+@media print {
+  body { background: #fff; color: #000; }
+  .main { padding: 0 !important; }
+  .card.report { border: 0; box-shadow: none; background: #fff; color: #000; }
+  .report .muted, .report .label { color: #555; }
+  .report .table-wrap, .report table, .report thead, .report tbody, .report tr, .report th, .report td { background: #fff !important; color: #000 !important; border-color: #ccc !important; }
+  .report .delta.good { color: #1d4ed8 !important; } .report .delta.bad { color: #b23d2e !important; }
+  .print-only { display: block; }
+  .agency-note, .banner { display: none !important; }
+}

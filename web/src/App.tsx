@@ -8,6 +8,7 @@ import { DashboardScreen } from './screens/Dashboard.tsx';
 import { OnboardingScreen } from './screens/Onboarding.tsx';
 import { DeliveryScreen } from './screens/Delivery.tsx';
 import { DeliverableScreen } from './screens/Deliverable.tsx';
+import { FeedbackScreen, ReportScreen } from './screens/Report.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -148,8 +149,8 @@ function ClientScreen({ clientId, screen, subId, search }: { clientId: string; s
     case 'connexions': return <ConnectionsScreen clientId={clientId} />;
     case 'guides': return <GuidesScreen clientId={clientId} />;
     case 'rendez-vous': return <AppointmentsScreen clientId={clientId} />;
-    case 'rapport': return <LaterScreen clientId={clientId} a="Rapport" b="de période" lot={7}>Tableau comparatif hebdomadaire ou mensuel, analyse de l'agence et export PDF figé.</LaterScreen>;
-    case 'feedback': return <LaterScreen clientId={clientId} a="Vos" b="retours" lot={7}>Formulaire de retour (bug, résultat, demande, question) et suivi des réponses de l'agence.</LaterScreen>;
+    case 'rapport': return <ReportScreen clientId={clientId} />;
+    case 'feedback': return <FeedbackScreen clientId={clientId} />;
     case 'onboarding': return <OnboardingScreen clientId={clientId} />;
     case 'delivery': return <DeliveryScreen clientId={clientId} />;
     default: return <LaterScreen clientId={clientId} a="Page" b="introuvable" lot={1}>Cette page n'existe pas.</LaterScreen>;

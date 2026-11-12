@@ -579,7 +579,7 @@ interface ConsoleRow {
 }
 
 export function ConsoleScreen() {
-  const { data, error, loading } = useApi<{ summary: { spend30_cents: number | null; avgCostPerBooked30_cents: number | null; clientsBehindPace: number }; rows: ConsoleRow[] }>('/agence/console');
+  const { data, error, loading } = useApi<{ summary: { spend30_cents: number | null; avgCostPerBooked30_cents: number | null; clientsBehindPace: number }; rows: ConsoleRow[]; feedbackThemes?: { category: string; recent: number; open: number; clients: string[] }[] }>('/agence/console');
   const [onlyRed, setOnlyRed] = useState(false);
   return (
     <>
@@ -593,6 +593,18 @@ export function ConsoleScreen() {
             <div class="card edge kpi"><span class="label">Coût moyen par rendez-vous · 30 j</span><span class="kpi-value">{formatEuros(data.summary.avgCostPerBooked30_cents, { decimals: true })}</span></div>
             <div class="card edge kpi" style={{ '--edge': data.summary.clientsBehindPace ? 'var(--alert)' : 'var(--border)' }}><span class="label">Clients en retard sur le rythme</span><span class="kpi-value">{data.summary.clientsBehindPace}</span></div>
           </div>
+          {data.feedbackThemes && data.feedbackThemes.length > 0 && (
+            <div class="card section">
+              <div class="label" style="margin-bottom:8px">Retours clients · thèmes de la semaine</div>
+              {data.feedbackThemes.map((t) => (
+                <div class="small" style="display:flex;gap:10px;flex-wrap:wrap;margin:4px 0">
+                  <strong>{({ bug: 'Bugs', resultat: 'Résultats décevants', demande: 'Demandes', question: 'Questions' } as Record<string, string>)[t.category] ?? t.category}</strong>
+                  <span>{t.recent} cette semaine · {t.open} ouvert{t.open > 1 ? 's' : ''}</span>
+                  <span class="muted">{t.clients.join(', ')}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div class="section">
             <label class="small muted" style="display:inline-flex;gap:8px;align-items:center;margin-bottom:10px">
               <input type="checkbox" checked={onlyRed} onChange={(e) => setOnlyRed((e.target as HTMLInputElement).checked)} /> Seulement les lignes en rouge
