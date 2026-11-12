@@ -1,3 +1,4 @@
+import { ConsoleAlerts } from '../components/Alerts.tsx';
 import { useRef, useState } from 'preact/hooks';
 import {
   DELIVERABLE_STATUS_LABEL, DELIVERABLE_TYPE_LABEL, PHASE_STATE_LABEL, formatDate, formatDateTime, formatEuros, formatInt,
@@ -415,6 +416,8 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
   const [filter, setFilter] = useState<'tous' | 'a_renseigner' | 'a_venir'>('tous');
   const [err, setErr] = useState<string | null>(null);
   const canEdit = me.user.role === 'agence' && view === 'agence';
+  // Le client renseigne lui-même le statut de ses rendez-vous (décision 0014) ; l'agence aussi, en vue agence.
+  const canSetStatus = me.user.role === 'client' || canEdit;
   const canAdd = me.user.role === 'client' || canEdit;
   const now = Date.now();
   const missing = (a: ApptItem) => a.status === 'prevu' && Date.parse(a.scheduled_at) < now;
@@ -438,7 +441,7 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
         <>
           {missingCount > 0 && (
             <div class="banner warn">
-              <span><strong>{missingCount} rendez-vous passé{missingCount > 1 ? 's' : ''} sans statut.</strong> {canEdit ? 'Indiquez s\'ils ont été honorés : sans cela, le taux de présence et le coût par rendez-vous tenu sont faux.' : 'Obsidian Partners les renseigne ; tant que ce n\'est pas fait, ils ne sont pas comptés comme tenus.'}</span>
+              <span><strong>{missingCount} rendez-vous passé{missingCount > 1 ? 's' : ''} sans statut.</strong> {canSetStatus ? 'Indiquez pour chacun s\'il a été honoré, manqué ou annulé : sans cela, le taux de présence et le coût par rendez-vous tenu ne se calculent pas.' : 'Le client les renseigne depuis son espace ; tant que ce n\'est pas fait, ils ne sont pas comptés comme tenus.'}</span>
               <button class="ghost-btn" onClick={() => setFilter('a_renseigner')}>Afficher</button>
             </div>
           )}
@@ -462,7 +465,7 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
                 { key: 'booked', label: 'Pris le', value: (r) => r.booked_at, render: (r) => formatDate(r.booked_at) },
                 {
                   key: 'status', label: 'Statut', value: (r) => r.status,
-                  render: (r) => canEdit ? (
+                  render: (r) => canSetStatus ? (
                     <select class="client-select" style="width:auto;padding:4px 8px" value={r.status} aria-label={`Statut du rendez-vous de ${r.contact_name ?? 'ce contact'}`}
                       onChange={(e) => patch(r, { status: (e.target as HTMLSelectElement).value })}>
                       {Object.entries(APPT_STATUS).map(([k, l]) => (
@@ -473,7 +476,7 @@ export function AppointmentsScreen({ clientId }: { clientId: string }) {
                 },
                 {
                   key: 'source', label: 'Source', value: (r) => r.origin,
-                  render: (r) => <span class="mono small muted">{r.origin === 'saisie' ? 'Saisi' : 'GHL'}{r.status_source === 'agence' ? ' · statut agence' : ''}</span>,
+                  render: (r) => <span class="mono small muted">{r.origin === 'saisie' ? 'Saisi' : 'GHL'}{r.status_source === 'agence' ? ' · statut agence' : r.status_source === 'client' ? ' · statut client' : ''}</span>,
                 },
               ]}
             />
@@ -579,7 +582,7 @@ export function ConsoleScreen() {
   const [onlyRed, setOnlyRed] = useState(false);
   return (
     <>
-      <PageHead a="Console" b="agence" sub="Tous les clients, triés par ce qui demande une action." />
+      <PageHead a="Console" b="agence" sub="Tous les clients, triés par ce qui demande une action." right={<a class="btn" href="/agence/clients/nouveau">Nouveau client</a>} />
       {error && <ErrorBox error={error} />}
       {loading && !data && <Loading />}
       {data && (
@@ -589,6 +592,7 @@ export function ConsoleScreen() {
             <div class="card edge kpi"><span class="label">Coût moyen par rendez-vous · 30 j</span><span class="kpi-value">{formatEuros(data.summary.avgCostPerBooked30_cents, { decimals: true })}</span></div>
             <div class="card edge kpi" style={{ '--edge': data.rows.some((r) => r.red) ? 'var(--alert)' : 'var(--border)' }}><span class="label">Clients en rouge</span><span class="kpi-value">{data.rows.filter((r) => r.red).length}</span></div>
           </div>
+          <ConsoleAlerts clients={data.rows.map((r) => ({ id: r.id, name: r.name }))} />
           {data.feedbackThemes && data.feedbackThemes.length > 0 && (
             <div class="card section">
               <div class="label" style="margin-bottom:8px">Retours clients · thèmes de la semaine</div>
@@ -611,7 +615,7 @@ export function ConsoleScreen() {
               initialSort={{ key: 'action', dir: 'desc' }}
               rowClass={(r) => (r.red ? 'red' : '')}
               columns={[
-                { key: 'name', label: 'Client', value: (r) => r.name, render: (r) => <a href={`/c/${r.id}/tableau-de-bord`} title={r.redReasons.join(' · ')}>{r.name}</a> },
+                { key: 'name', label: 'Client', value: (r) => r.name, render: (r) => <><a href={`/c/${r.id}/tableau-de-bord`} title={r.redReasons.join(' · ')}>{r.name}</a> <a class="mono small muted" href={`/agence/clients/${r.id}`} title="Modifier la fiche client">fiche</a></> },
                 { key: 'action', label: 'À traiter', value: (r) => (r.red ? 1000 : 0) + r.openFeedback + r.overdueClientTasks + r.openRecos, render: (r) => r.red ? r.redReasons.join(' · ') : '—' },
                 { key: 'phase', label: 'Phase', value: (r) => r.phase },
                 { key: 'onb', label: 'Onboarding', value: (r) => r.onboardingSubmittedAt, render: (r) => <a href={`/c/${r.id}/onboarding`}>{r.onboarding === 'a_remplir' ? 'À remplir' : r.onboarding === 'complement_demande' ? 'Complément demandé' : `Envoyé le ${formatDate(r.onboardingSubmittedAt, { year: false })}`}</a> },

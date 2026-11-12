@@ -1,9 +1,11 @@
 import { useState } from 'preact/hooks';
 import {
-  DASH, addDaysYmd, delta, todayParis, formatDate, formatEuros, formatInt, formatPercent, verdict, type AppointmentCounter, type Thresholds, type Totals,
+  DASH, addDaysYmd, delta, todayParis, formatDate, formatEuros, formatInt, formatPercent, unmeasuredReason, verdict, type AppointmentCounter, type Thresholds, type Totals,
 } from '@obsidian/domain';
 import { useApi } from '../api.ts';
 import { ClientAlerts, type ClientOverview } from '../components/ClientAlerts.tsx';
+import { ClientAlertsCard } from '../components/Alerts.tsx';
+import { useSession } from '../session.ts';
 import {
   DataTable, DualBarChart, EmptyState, ErrorBox, HBars, KpiCard, Loading, PageHead, SectionTitle, Segmented,
 } from '../components/ui.tsx';
@@ -26,6 +28,7 @@ interface Dashboard {
 }
 
 export function DashboardScreen({ clientId, search }: { clientId: string; search: string }) {
+  const session = useSession();
   const initial = Number(new URLSearchParams(search).get('jours')) || 30;
   // Période : 7 / 30 / 90 jours, depuis le 1er janvier, ou dates libres (toujours closes à hier au plus tard).
   const yesterday = addDaysYmd(todayParis(), -1);
@@ -46,7 +49,7 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
   const um = new Set(data?.unmeasured ?? []);
   const val = (k: keyof Totals) => (cur && !um.has(k) ? cur[k] : null);
   const d = (k: keyof Totals) => (um.has(k) ? null : delta(cur ? cur[k] : null, prev ? prev[k] : null));
-  const reason = (k: keyof Totals) => (um.has(k) ? 'Non synchronisé pour ce client' : NO_DATA);
+  const reason = (k: keyof Totals) => (um.has(k) ? unmeasuredReason(k) : NO_DATA);
   const ceiling = data?.thresholds.cost_per_booked_max_cents ?? null;
 
   return (
@@ -72,6 +75,7 @@ export function DashboardScreen({ clientId, search }: { clientId: string; search
       />
 
       {overview.data && <ClientAlerts clientId={clientId} overview={overview.data} />}
+      {session.isAgency && session.view === 'agence' && <ClientAlertsCard clientId={clientId} />}
       {error && <ErrorBox error={error} />}
       {loading && !data && <Loading />}
 

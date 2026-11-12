@@ -271,8 +271,14 @@ analysesRobot.put('/clients/:clientId/analyses/:analysisId', async (c) => {
   }
   stmts.push(c.env.DB.prepare(`UPDATE analyses SET status = 'terminee', summary_md = ?1, client_summary_md = ?2, completed_at = ?3, error = NULL, updated_at = ?3 WHERE id = ?4`)
     .bind(summary, clientSummary, now, a.id));
+  // Publication automatique (décision 0014) : case cochée pour ce client → synthèse et recommandations visibles aussitôt.
+  const autoPublish = Boolean(client.auto_publish_recos);
+  if (autoPublish) {
+    stmts.push(c.env.DB.prepare('UPDATE analyses SET visible_client = 1, published_at = ?1 WHERE id = ?2').bind(now, a.id));
+    stmts.push(c.env.DB.prepare(`UPDATE recommendations SET visible_client = 1, published_at = ?1 WHERE analysis_id = ?2 AND state != 'ignoree'`).bind(now, a.id));
+  }
   await c.env.DB.batch(stmts);
-  await audit(c.env.DB, { clientId: client.id, actorId: 'robot-analyse', actorEmail: 'generation-automatique', action: 'analyse_deposee', objectType: 'analysis', objectId: a.id, after: { recommendations: recos.length } });
+  await audit(c.env.DB, { clientId: client.id, actorId: 'robot-analyse', actorEmail: 'generation-automatique', action: autoPublish ? 'analyse_deposee_publiee' : 'analyse_deposee', objectType: 'analysis', objectId: a.id, after: { recommendations: recos.length, autoPublish } });
   return c.json({ ok: true });
 });
 

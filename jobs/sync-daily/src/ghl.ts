@@ -4,7 +4,7 @@
  *  1. Remet à zéro les colonnes CRM (contacts, RDV pris, RDV tenus, ventes) de metrics_daily sur la fenêtre.
  *  2. Réécrit ces colonnes par jour × publicité (attribution GHL utmAdId ; à défaut campagne ; à défaut « non rattaché »),
  *     sans jamais toucher aux colonnes Meta (dépense, impressions…).
- *  3. Met à jour les rendez-vous en conservant tout statut posé par l'agence.
+ *  3. Met à jour les rendez-vous en conservant tout statut posé dans l'espace (client ou agence).
  *  4. Remplace les sources de contacts de la fenêtre et l'instantané du pipeline affiché.
  */
 import { ROLLUP_STATEMENTS, ghlAppointmentStatus, ghlAttribution, parisDay, type GhlClientConfig } from '../../../packages/domain/src/index.ts';
@@ -95,6 +95,11 @@ export async function syncGhl(
   for (const e of [...events].filter((x) => (x.appointmentStatus ?? x.appoinmentStatus) !== 'cancelled' && Date.parse(x.startTime) <= now)
     .sort((a, b) => a.startTime.localeCompare(b.startTime))) lastPast.set(e.contactId, e.id);
 
+  // Statuts posés dans l'espace (client ou agence, décision 0014) : ils priment sur GHL, y compris pour les rendez-vous tenus.
+  const overrides = new Map((await db.prepare(
+    `SELECT ghl_appointment_id, status FROM appointments WHERE client_id = ?1 AND status_source != 'ghl' AND ghl_appointment_id IS NOT NULL`,
+  ).bind(clientId).all<{ ghl_appointment_id: string; status: string }>()).results?.map((r) => [r.ghl_appointment_id, r.status] as const) ?? []);
+
   const statements: D1PreparedStatement[] = [];
   const statuses: Record<string, number> = {};
   for (const e of events) {
@@ -113,9 +118,9 @@ export async function syncGhl(
        ON CONFLICT (client_id, ghl_appointment_id) DO UPDATE SET
          contact_name = excluded.contact_name, ghl_contact_id = excluded.ghl_contact_id, booked_at = excluded.booked_at, scheduled_at = excluded.scheduled_at,
          campaign_id = excluded.campaign_id, ad_id = excluded.ad_id,
-         status = CASE WHEN appointments.status_source = 'agence' THEN appointments.status ELSE excluded.status END,
-         counts_toward_target = CASE WHEN appointments.status_source = 'agence' THEN appointments.counts_toward_target ELSE excluded.counts_toward_target END,
-         exclusion_reason = CASE WHEN appointments.status_source = 'agence' THEN appointments.exclusion_reason ELSE excluded.exclusion_reason END,
+         status = CASE WHEN appointments.status_source != 'ghl' THEN appointments.status ELSE excluded.status END,
+         counts_toward_target = CASE WHEN appointments.status_source != 'ghl' THEN appointments.counts_toward_target ELSE excluded.counts_toward_target END,
+         exclusion_reason = CASE WHEN appointments.status_source != 'ghl' THEN appointments.exclusion_reason ELSE excluded.exclusion_reason END,
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     ).bind(`ap_${clientId}_${e.id}`, clientId, e.id, isTest ? 'Test interne' : displayName(e),
       new Date(e.dateAdded).toISOString(), new Date(e.startTime).toISOString(), status,
@@ -125,7 +130,7 @@ export async function syncGhl(
     const bookedDay = parisDay(e.dateAdded);
     if (inWindow(bookedDay)) {
       bump(bookedDay, k, 'booked');
-      if (status === 'honore') bump(bookedDay, k, 'held');
+      if ((overrides.get(e.id) ?? status) === 'honore') bump(bookedDay, k, 'held');
     }
   }
 

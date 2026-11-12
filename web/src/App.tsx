@@ -10,6 +10,8 @@ import { DeliveryScreen } from './screens/Delivery.tsx';
 import { DeliverableScreen } from './screens/Deliverable.tsx';
 import { FeedbackScreen, ReportScreen } from './screens/Report.tsx';
 import { AgencyGuidesScreen, GuideScreen } from './screens/Guides.tsx';
+import { CashScreen } from './screens/Cash.tsx';
+import { ClientEditScreen } from './screens/ClientEdit.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -17,7 +19,7 @@ import {
 const NAV = [
   { group: 'Accueil', items: [
     ['tableau-de-bord', 'Tableau de bord'], ['pilotage', 'Pilotage'], ['infrastructure', 'Infrastructure'],
-    ['rendez-vous', 'Rendez-vous'], ['rapport', 'Rapport'], ['connexions', 'Connexions'],
+    ['rendez-vous', 'Rendez-vous'], ['encaissements', 'Encaissements'], ['rapport', 'Rapport'], ['connexions', 'Connexions'],
   ] },
   { group: 'Démarrage et aide', items: [['onboarding', 'Onboarding'], ['guides', 'Guides'], ['feedback', 'Feedback']] },
 ] as const;
@@ -53,15 +55,16 @@ function Shell() {
   const { me, view, isAgency } = session;
 
   const m = path.match(/^\/c\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?/);
+  const agencyClient = path.match(/^\/agence\/clients\/([^/]+)$/)?.[1] ?? null;
   const clientId = m?.[1] ?? null;
   const screen = m?.[2] ?? 'tableau-de-bord';
   const subId = m?.[3] ?? null;
   const defaultClient = me.clients[0]?.id ?? null;
 
   useEffect(() => {
-    if (path === '/' || (path === '/agence' && view === 'client')) {
+    if (path === '/' || (path.startsWith('/agence') && view === 'client')) {
       if (isAgency && view === 'agence') navigate('/agence', true);
-      else if (defaultClient) navigate(`/c/${clientId ?? defaultClient}/tableau-de-bord`, true);
+      else if (defaultClient) navigate(`/c/${clientId ?? (agencyClient && agencyClient !== 'nouveau' ? agencyClient : null) ?? defaultClient}/tableau-de-bord`, true);
     }
   }, [path, view]);
   useEffect(() => setMenuOpen(false), [path]);
@@ -75,7 +78,7 @@ function Shell() {
   }
 
   // Un client navigue toujours dans SON espace, quel que soit l'identifiant présent dans l'URL.
-  const activeClient = isAgency ? (clientId ?? store.get('lastClient') ?? defaultClient) : defaultClient;
+  const activeClient = isAgency ? (clientId ?? (agencyClient && agencyClient !== 'nouveau' ? agencyClient : null) ?? store.get('lastClient') ?? defaultClient) : defaultClient;
   useEffect(() => { if (clientId && isAgency) store.set('lastClient', clientId); }, [clientId]);
   const clientName = me.clients.find((c) => c.id === activeClient)?.name;
 
@@ -102,7 +105,7 @@ function Shell() {
             {view === 'agence' && <a class="nav-link" href="/agence" aria-current={path === '/agence' ? 'page' : undefined}>Console multi-clients</a>}
             <label class="label" for="client-select" style="padding:10px 10px 6px">Client</label>
             <select id="client-select" class="client-select" value={activeClient ?? ''}
-              onChange={(e) => navigate(`/c/${(e.target as HTMLSelectElement).value}/${clientId ? screen : 'tableau-de-bord'}`)}>
+              onChange={(e) => { const v = (e.target as HTMLSelectElement).value; navigate(agencyClient ? `/agence/clients/${v}` : `/c/${v}/${clientId ? screen : 'tableau-de-bord'}`); }}>
               {me.clients.map((c) => <option value={c.id}>{c.name}</option>)}
             </select>
           </div>
@@ -120,6 +123,7 @@ function Shell() {
         {activeClient && isAgency && view === 'agence' && (
           <nav class="nav-group" aria-label="Agence">
             <span class="label">Agence</span>
+            <a class="nav-link" href={`/agence/clients/${activeClient}`} aria-current={path === `/agence/clients/${activeClient}` ? 'page' : undefined}>Fiche client</a>
             <a class="nav-link" href={`/c/${activeClient}/delivery`} aria-current={clientId && screen === 'delivery' ? 'page' : undefined}>Delivery</a>
             <a class="nav-link" href="/agence/guides" aria-current={path === '/agence/guides' ? 'page' : undefined}>Guides (rédaction)</a>
           </nav>
@@ -136,6 +140,7 @@ function Shell() {
       <main class="main" id="contenu">
         {path === '/agence' && isAgency && view === 'agence' ? <ConsoleScreen />
           : path === '/agence/guides' && isAgency && view === 'agence' ? <AgencyGuidesScreen />
+          : agencyClient && isAgency && view === 'agence' ? <ClientEditScreen key={agencyClient} clientId={agencyClient === 'nouveau' ? null : agencyClient} />
           : clientId ? <ClientScreen key={`${clientId}-${view}-${subId ?? ''}`} clientId={clientId} screen={screen} subId={subId} search={search} />
           : <Loading />}
       </main>
@@ -152,6 +157,7 @@ function ClientScreen({ clientId, screen, subId, search }: { clientId: string; s
     case 'connexions': return <ConnectionsScreen clientId={clientId} />;
     case 'guides': return subId ? <GuideScreen clientId={clientId} guideId={subId} /> : <GuidesScreen clientId={clientId} />;
     case 'rendez-vous': return <AppointmentsScreen clientId={clientId} />;
+    case 'encaissements': return <CashScreen clientId={clientId} />;
     case 'rapport': return <ReportScreen clientId={clientId} />;
     case 'feedback': return <FeedbackScreen clientId={clientId} />;
     case 'onboarding': return <OnboardingScreen clientId={clientId} />;

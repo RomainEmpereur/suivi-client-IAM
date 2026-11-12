@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
-import { computeAppointmentCounter, safeDiv, type AppointmentLike } from '@obsidian/domain';
+import { DEFAULT_THRESHOLDS, computeAppointmentCounter, safeDiv, type AppointmentLike } from '@obsidian/domain';
 import type { AppEnv, ClientRow } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { all, audit, first, newId, nowIso } from '../db.ts';
+import { latestAlerts, storeAllAlerts } from '../alerts.ts';
 import { HttpError, notFound } from '../errors.ts';
 import { clientTotals, periodBounds } from '../metrics.ts';
 import { currentPhaseProgress, overdueClientTasks } from './clients.ts';
@@ -200,4 +201,147 @@ agency.delete('/guides/:id/file', async (c) => {
   await c.env.DB.prepare('UPDATE guides SET r2_key = NULL, updated_at = ?1 WHERE id = ?2').bind(nowIso(), g.id).run();
   await audit(c.env.DB, { clientId: g.client_id, actorId: user.id, actorEmail: user.email, action: 'guide_pdf_retire', objectType: 'guide', objectId: g.id });
   return c.json({ ok: true });
+});
+
+// ─── Alertes quotidiennes (décision 0014) ───────────────────────────────────────
+
+agency.get('/alerts', async (c) => {
+  const alerts = await latestAlerts(c.env.DB);
+  const last = await first<{ at: string | null }>(c.env.DB, `SELECT MAX(created_at) AS at FROM alerts WHERE run_date IS NOT NULL`);
+  return c.json({ alerts, computedAt: last?.at ?? null });
+});
+
+agency.post('/alerts/run', async (c) => {
+  const r = await storeAllAlerts(c.env.DB, c.env.ENVIRONMENT === 'production');
+  const user = c.get('user');
+  await audit(c.env.DB, { clientId: null, actorId: user.id, actorEmail: user.email, action: 'alertes_calcul', objectType: 'alerts', after: r });
+  return c.json({ ok: true, ...r });
+});
+
+// ─── Édition des clients (§12, décision 0014) ───────────────────────────────────
+
+const STATUSES = ['prospect', 'onboarding', 'build', 'actif', 'pause', 'termine'] as const;
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const THRESHOLD_KEYS = Object.keys(DEFAULT_THRESHOLDS) as (keyof typeof DEFAULT_THRESHOLDS)[];
+
+function editableClient(cl: ClientRow) {
+  let thresholds: Record<string, unknown> = {};
+  try { thresholds = JSON.parse(cl.thresholds_json || '{}'); } catch { thresholds = {}; }
+  return {
+    id: cl.id, name: cl.name, slug: cl.slug, status: cl.status, offer: cl.offer, startDate: cl.start_date,
+    campaignsLaunchedAt: cl.campaigns_launched_at, driveFolderUrl: cl.drive_folder_url ?? null,
+    adAccountCurrency: cl.ad_account_currency, adAccountTimezone: cl.ad_account_timezone,
+    autoPublishRecos: Boolean(cl.auto_publish_recos), isDemo: Boolean(cl.is_demo),
+    thresholds, defaultThresholds: DEFAULT_THRESHOLDS,
+  };
+}
+
+/** Valide et normalise les champs envoyés ; ne renvoie que ceux présents dans le corps. */
+function parseClientFields(body: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  const str = (k: string, col: string, max: number, nullable = true) => {
+    if (!(k in body)) return;
+    const v = body[k];
+    if (v == null || v === '') { if (!nullable) throw new HttpError(400, `${k} requis.`); out[col] = null; return; }
+    if (typeof v !== 'string' || v.trim().length > max) throw new HttpError(400, `${k} invalide.`);
+    out[col] = v.trim();
+  };
+  str('name', 'name', 120, false);
+  str('offer', 'offer', 200);
+  if ('status' in body) {
+    if (!STATUSES.includes(body.status as never)) throw new HttpError(400, 'Statut invalide.');
+    out.status = body.status;
+  }
+  for (const [k, col] of [['startDate', 'start_date'], ['campaignsLaunchedAt', 'campaigns_launched_at']] as const) {
+    if (!(k in body)) continue;
+    const v = body[k];
+    if (v == null || v === '') { out[col] = null; continue; }
+    if (typeof v !== 'string' || !YMD.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`))) throw new HttpError(400, `${k} invalide (AAAA-MM-JJ).`);
+    out[col] = v;
+  }
+  if ('driveFolderUrl' in body) {
+    const v = body.driveFolderUrl;
+    if (v == null || v === '') out.drive_folder_url = null;
+    else if (typeof v !== 'string' || !/^https:\/\/[^\s]+$/.test(v.trim()) || v.length > 500) throw new HttpError(400, 'Lien du dossier invalide (https).');
+    else out.drive_folder_url = v.trim();
+  }
+  if ('adAccountCurrency' in body) {
+    if (typeof body.adAccountCurrency !== 'string' || !/^[A-Z]{3}$/.test(body.adAccountCurrency)) throw new HttpError(400, 'Devise invalide (ex. EUR).');
+    out.ad_account_currency = body.adAccountCurrency;
+  }
+  if ('adAccountTimezone' in body) {
+    const tz = body.adAccountTimezone;
+    try { if (typeof tz !== 'string') throw new Error(); new Intl.DateTimeFormat('fr-FR', { timeZone: tz }); } catch { throw new HttpError(400, 'Fuseau invalide (ex. Europe/Paris).'); }
+    out.ad_account_timezone = tz;
+  }
+  if ('autoPublishRecos' in body) out.auto_publish_recos = body.autoPublishRecos ? 1 : 0;
+  if ('thresholds' in body) {
+    const t = body.thresholds;
+    if (t == null || typeof t !== 'object' || Array.isArray(t)) throw new HttpError(400, 'Seuils invalides.');
+    const clean: Record<string, number> = {};
+    for (const [k, v] of Object.entries(t as Record<string, unknown>)) {
+      if (!THRESHOLD_KEYS.includes(k as never)) throw new HttpError(400, `Seuil inconnu : ${k}.`);
+      if (v == null || v === '') continue; // valeur par défaut
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1e9) throw new HttpError(400, `Seuil ${k} invalide.`);
+      clean[k] = v;
+    }
+    out.thresholds_json = JSON.stringify(clean);
+  }
+  return out;
+}
+
+const slugify = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'client';
+
+agency.get('/clients/:id', async (c) => {
+  const cl = await first<ClientRow>(c.env.DB, 'SELECT * FROM clients WHERE id = ?1', c.req.param('id'));
+  if (!cl || (c.env.ENVIRONMENT === 'production' && cl.is_demo)) throw notFound();
+  return c.json({ client: editableClient(cl) });
+});
+
+agency.post('/clients', async (c) => {
+  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+  const fields = parseClientFields(body);
+  if (!fields.name) throw new HttpError(400, 'Nom du client requis.');
+  const base = slugify(String(fields.name));
+  let slug = base;
+  for (let i = 2; await first(c.env.DB, 'SELECT 1 FROM clients WHERE slug = ?1', slug); i++) slug = `${base}-${i}`;
+  const id = `cl_${slug.replace(/-/g, '_')}`;
+  if (await first(c.env.DB, 'SELECT 1 FROM clients WHERE id = ?1', id)) throw new HttpError(409, 'Un client porte déjà cet identifiant.');
+  const cols = { status: 'onboarding', ...fields, id, slug, is_demo: 0,
+    // Aucune source branchée à la création : ces mesures s'affichent « — » avec leur raison, jamais 0.
+    unmeasured_json: JSON.stringify(['crm_contacts', 'appointments_booked', 'appointments_held', 'sales', 'cash_collected_cents']) };
+  const keys = Object.keys(cols);
+  await c.env.DB.prepare(`INSERT INTO clients (${keys.join(', ')}) VALUES (${keys.map((_, i) => `?${i + 1}`).join(', ')})`)
+    .bind(...keys.map((k) => (cols as Record<string, unknown>)[k])).run();
+  const user = c.get('user');
+  await audit(c.env.DB, { clientId: id, actorId: user.id, actorEmail: user.email, action: 'client_creation', objectType: 'client', objectId: id, after: cols });
+  const cl = await first<ClientRow>(c.env.DB, 'SELECT * FROM clients WHERE id = ?1', id);
+  return c.json({ client: editableClient(cl!) }, 201);
+});
+
+agency.patch('/clients/:id', async (c) => {
+  const cl = await first<ClientRow>(c.env.DB, 'SELECT * FROM clients WHERE id = ?1', c.req.param('id'));
+  if (!cl || (c.env.ENVIRONMENT === 'production' && cl.is_demo)) throw notFound();
+  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+  const fields = parseClientFields(body);
+  const keys = Object.keys(fields).filter((k) => (cl as unknown as Record<string, unknown>)[k] !== fields[k]);
+  if (!keys.length) return c.json({ client: editableClient(cl) });
+  const now = nowIso();
+  await c.env.DB.prepare(`UPDATE clients SET ${keys.map((k, i) => `${k} = ?${i + 1}`).join(', ')}, updated_at = ?${keys.length + 1} WHERE id = ?${keys.length + 2}`)
+    .bind(...keys.map((k) => fields[k]), now, cl.id).run();
+  const user = c.get('user');
+  // Avant / après pour chaque champ modifié, seuils compris (§12).
+  await audit(c.env.DB, {
+    clientId: cl.id, actorId: user.id, actorEmail: user.email, action: keys.includes('thresholds_json') ? 'client_seuils_modification' : 'client_modification',
+    objectType: 'client', objectId: cl.id,
+    before: Object.fromEntries(keys.map((k) => [k, (cl as unknown as Record<string, unknown>)[k]])),
+    after: Object.fromEntries(keys.map((k) => [k, fields[k]])),
+  });
+  const updated = await first<ClientRow>(c.env.DB, 'SELECT * FROM clients WHERE id = ?1', cl.id);
+  return c.json({ client: editableClient(updated!) });
+});
+
+agency.get('/clients/:id/alerts', async (c) => {
+  const alerts = await latestAlerts(c.env.DB, [c.req.param('id')]);
+  return c.json({ alerts });
 });

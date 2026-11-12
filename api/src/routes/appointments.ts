@@ -3,13 +3,14 @@ import type { AppEnv } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { scopeClient } from '../scope.ts';
 import { all, audit, first, newId, nowIso, run } from '../db.ts';
-import { refreshManualAppointments } from '../manual-appointments.ts';
+import { refreshHeldFromAppointments, refreshManualAppointments } from '../manual-appointments.ts';
 import { HttpError, notFound } from '../errors.ts';
 
 /**
  * Gestion des rendez-vous (décision 0006).
- * - L'agence pose le statut (honoré, absent, annulé, prévu) et peut exclure un rendez-vous « hors cible » avec un motif.
- *   Ce statut prime sur GHL : la synchronisation ne l'écrase jamais (status_source = 'agence').
+ * - Le client pose le statut (honoré, absent, annulé, prévu) de ses rendez-vous (décision 0014) ; l'agence aussi, en vue agence,
+ *   et elle seule peut exclure un rendez-vous « hors cible » avec un motif.
+ *   Ce statut prime sur GHL : la synchronisation ne l'écrase jamais (status_source = 'client' ou 'agence').
  * - Le client et l'agence peuvent ajouter un rendez-vous ; il naît « prévu » et ne compte qu'une fois validé par l'agence.
  * - Toute modification du compteur est journalisée avec la valeur avant et après (§12).
  */
@@ -42,9 +43,10 @@ appointments.get('/:clientId/crm-leads', async (c) => {
 });
 
 appointments.patch('/:clientId/appointments/:appointmentId', async (c) => {
-  requireAgency(c);
   const client = c.get('client');
   const user = c.get('user');
+  // Le client renseigne le statut de ses rendez-vous (décision 0014) ; l'agence le peut aussi, en vue agence seulement.
+  if (user.role === 'agence') requireAgency(c);
   const appt = await first<ApptRow>(c.env.DB,
     'SELECT id, status, counts_toward_target, exclusion_reason, scheduled_at FROM appointments WHERE id = ?1 AND client_id = ?2',
     c.req.param('appointmentId'), client.id);
@@ -52,6 +54,9 @@ appointments.patch('/:clientId/appointments/:appointmentId', async (c) => {
 
   const body = await c.req.json<{ status?: string; countsTowardTarget?: boolean; exclusionReason?: string | null }>()
     .catch(() => ({} as Record<string, never>));
+  if (user.role !== 'agence' && (body.countsTowardTarget !== undefined || body.exclusionReason !== undefined)) {
+    throw new HttpError(403, "Seule l'agence peut exclure un rendez-vous.");
+  }
   const status = body.status ?? appt.status;
   if (!STATUSES.includes(status as (typeof STATUSES)[number])) throw new HttpError(400, 'Statut invalide.');
   if ((status === 'honore' || status === 'absent') && Date.parse(appt.scheduled_at) > Date.now()) {
@@ -64,10 +69,11 @@ appointments.patch('/:clientId/appointments/:appointmentId', async (c) => {
   const now = nowIso();
   await run(c.env.DB,
     `UPDATE appointments SET status = ?1, counts_toward_target = ?2, exclusion_reason = ?3,
-       status_source = 'agence', status_updated_at = ?4, status_updated_by = ?5, updated_at = ?4
+       status_source = ?8, status_updated_at = ?4, status_updated_by = ?5, updated_at = ?4
      WHERE id = ?6 AND client_id = ?7`,
-    status, counts ? 1 : 0, reason, now, user.id, appt.id, client.id);
+    status, counts ? 1 : 0, reason, now, user.id, appt.id, client.id, user.role === 'agence' ? 'agence' : 'client');
   await refreshManualAppointments(c.env.DB, client.id);
+  await refreshHeldFromAppointments(c.env.DB, client.id);
   await audit(c.env.DB, {
     clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'rdv_statut', objectType: 'appointment', objectId: appt.id,
     before: { status: appt.status, counts_toward_target: appt.counts_toward_target, exclusion_reason: appt.exclusion_reason },

@@ -82,6 +82,11 @@ export const KPI_DEPENDS: Record<string, (keyof Totals)[]> = {
   vsl_views: ['vsl_views'], cancel_rate: ['appointments_booked'], show_rate: ['appointments_held'], mrr_added_cents: [],
 };
 
+/** Raison affichée pour une mesure non disponible chez un client (décision 0014 : l'encaissé est saisi par le client). */
+export function unmeasuredReason(key: string): string {
+  return key === 'cash_collected_cents' ? 'Aucun encaissement saisi (page Encaissements)' : 'Non synchronisé pour ce client';
+}
+
 export interface KpiValue { key: string; value: number | null; previous: number | null; verdict: Verdict | null; reason: string | null }
 
 export interface AppointmentRates { cancel_rate: number | null; show_rate: number | null; reasonShow: string | null; reasonCancel: string | null }
@@ -102,7 +107,7 @@ export function kpiValues(
     const notMeasured = k.key === 'mrr_added_cents' || deps.some((d) => unmeasured.has(d));
     if (notMeasured) {
       return { key: k.key, value: null, previous: null, verdict: k.threshold ? 'non_mesure' : null,
-        reason: k.key === 'mrr_added_cents' ? 'Aucune source ne fournit encore le MRR' : 'Non synchronisé pour ce client' };
+        reason: k.key === 'mrr_added_cents' ? 'Aucune source ne fournit encore le MRR' : unmeasuredReason(deps.find((d) => unmeasured.has(d)) ?? '') };
     }
     let value = pick(cur, rates.cur, k.key);
     let previous = pick(prev, rates.prev, k.key);

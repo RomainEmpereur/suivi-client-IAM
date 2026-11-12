@@ -337,3 +337,9 @@ tr.row-alert td { background: var(--alert-soft); }
 .md-content .video { position: relative; width: 100%; aspect-ratio: 16 / 9; margin: 10px 0 14px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: #000; }
 .md-content .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 @media print { .md-content .video { display: none; } }
+/* Champs de formulaire simples (encaissements, fiche client) */
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.field input, .field select { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; min-width: 0; }
+.field input:focus, .field select:focus { border-color: var(--accent); outline: none; }
+.field .hint { color: var(--text-2); font-size: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; }

@@ -33,11 +33,13 @@ describe('Gestion des rendez-vous', () => {
     expect((await call(`/clients/${A}/appointments/${future.id}`, { as: AGENCE, method: 'PATCH', body: { status: 'honore' } })).status).toBe(400);
   });
 
-  it('le client ne pose pas de statut ; la vue client est en lecture seule ; un autre client reçoit 404', async () => {
+  it('le client pose le statut (décision 0014) mais ne peut pas exclure ; la vue client agence est en lecture seule ; un autre client reçoit 404', async () => {
     const { call, raw } = setup();
     const { id } = firstMissing(raw, A);
-    expect((await call(`/clients/${A}/appointments/${id}`, { as: CLIENT_A, method: 'PATCH', body: { status: 'honore' } })).status).toBe(403);
     expect((await call(`/clients/${A}/appointments/${id}`, { as: AGENCE, view: 'client', method: 'PATCH', body: { status: 'honore' } })).status).toBe(403);
+    expect((await call(`/clients/${A}/appointments/${id}`, { as: CLIENT_A, method: 'PATCH', body: { countsTowardTarget: false, exclusionReason: 'x' } })).status).toBe(403);
+    expect((await call(`/clients/${A}/appointments/${id}`, { as: CLIENT_A, method: 'PATCH', body: { status: 'honore' } })).status).toBe(200);
+    expect((raw.prepare('SELECT status, status_source FROM appointments WHERE id = ?').get(id) as any)).toMatchObject({ status: 'honore', status_source: 'client' });
     expect((await call(`/clients/${A}/appointments/${id}`, { as: CLIENT_B, method: 'PATCH', body: { status: 'honore' } })).status).toBe(404);
     expect((await call(`/clients/${B}/appointments/${id}`, { as: AGENCE, method: 'PATCH', body: { status: 'honore' } })).status).toBe(404);
   });

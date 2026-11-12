@@ -6,6 +6,7 @@ import app from './index.ts';
 import { WEB_ASSETS } from './generated/web-assets.ts';
 import type { Bindings } from './env.ts';
 import { runDaily } from '../../jobs/sync-daily/src/run.ts';
+import { storeAllAlerts } from './alerts.ts';
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -40,6 +41,9 @@ export default {
   async scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext) {
     const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
     if (hour !== 6) return;
-    ctx.waitUntil(runDaily(env).then((r) => console.log('Synchronisation quotidienne', JSON.stringify(Object.values(r).map((x) => (x === 'ok' ? 'ok' : 'échec'))))));
+    // Synchro, puis alertes quotidiennes de l'agence sur les chiffres à jour (décision 0014).
+    ctx.waitUntil(runDaily(env)
+      .then((r) => console.log('Synchronisation quotidienne', JSON.stringify(Object.values(r).map((x) => (x === 'ok' ? 'ok' : 'échec')))))
+      .finally(() => storeAllAlerts(env.DB, env.ENVIRONMENT === 'production').then((a) => console.log('Alertes', JSON.stringify(a)))));
   },
 };
