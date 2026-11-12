@@ -5,6 +5,7 @@ import {
 } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
+import { AnalysesBlock } from './Analyses.tsx';
 import { Counter } from '../components/Counter.tsx';
 import { CONNECTION_LABEL, type ClientOverview } from '../components/ClientAlerts.tsx';
 import {
@@ -555,35 +556,11 @@ function AddAppointment({ clientId, onDone }: { clientId: string; onDone: () => 
 interface Reco { id: string; date: string; severity: string; title: string; body: string; state: string; published?: boolean; internalNote?: string | null; repeatCount: number }
 
 export function PilotageScreen({ clientId }: { clientId: string }) {
-  const { data, error } = useApi<{ recommendations: Reco[] }>(`/clients/${clientId}/recommendations`);
   const lastSync = useLastSync(clientId);
-  const { view } = useSession();
-  const latest = data?.recommendations[0]?.date;
-  const today = data?.recommendations.filter((r) => r.date === latest) ?? [];
   return (
     <>
-      <PageHead a="Pilotage" b="détaillé" lastSync={lastSync} sub="L'écran de travail : quoi faire aujourd'hui, et sur quels chiffres." />
-      {error && <ErrorBox error={error} />}
-      <SectionTitle num="01" a="Recommandations" b="du jour" right={latest && <span class="mono small muted">{formatDate(latest)}</span>} />
-      {data && today.length === 0 && (
-        <EmptyState title="Aucune recommandation publiée">
-          L'analyse du jour apparaît ici après la synchronisation de 6 h 00{view === 'client' ? ', une fois relue par Obsidian Partners' : ''}.
-        </EmptyState>
-      )}
-      <div class="grid" style="gap:10px">
-        {today.map((r) => (
-          <article class="card edge reco" style={{ '--edge': SEVERITY_EDGE[r.severity] }}>
-            <div class="kpi-row">
-              <Pill kind={r.severity}>{SEVERITY_LABEL[r.severity]}</Pill>
-              <span class="mono small muted">{r.state === 'traitee' ? 'Traitée' : r.state === 'ignoree' ? 'Ignorée' : 'Ouverte'}{r.repeatCount > 1 ? ` · ${r.repeatCount}e jour` : ''}</span>
-            </div>
-            <h3>{r.title}</h3>
-            <p>{r.body}</p>
-            {view === 'agence' && r.published === false && <AgencyNote>non publiée, le client ne la voit pas.</AgencyNote>}
-            {view === 'agence' && r.internalNote && <div class="small" style="color:var(--agency)">Note interne : {r.internalNote}</div>}
-          </article>
-        ))}
-      </div>
+      <PageHead a="Pilotage" b="détaillé" lastSync={lastSync} sub="L'analyse de vos campagnes, sur la période choisie, et ce qu'il faut faire." />
+      <AnalysesBlock clientId={clientId} />
       {['02 · KPI clés', '03 · Du clic à la vente', '04 · Évolution', '05 · Campagnes', '06 · Publicités'].map((b) => (
         <div class="section">
           <div class="label" style="margin-bottom:8px">{b}</div>

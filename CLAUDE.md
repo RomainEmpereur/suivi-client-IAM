@@ -13,6 +13,7 @@ Lire `docs/cahier-des-charges.md` (il fait foi) et `docs/decisions/` avant toute
 - Lot 2 en cours : formulaire d'onboarding (décision 0004) et édition agence des tâches et phases livrés. Restent les ressources (R2), l'édition des livrables, les commentaires sur livrable.
 - Delivery piloté par l'espace (décision 0008) : rédaction dans le projet Claude, l'espace vérifie les conditions (onboarding + infos de base), enchaîne les étapes 0 à 8 du master prompt (`docs/delivery/master-prompt.md`, intégré par `scripts/embed-master-prompt.mjs`), prépare les briefs et suit la validation. Ressources non bloquantes.
 - Delivery automatique (décision 0009) : « Lancer le delivery » met les étapes 0 à 7 en file ; une tâche planifiée Claude Code (abonnement, pas de clé API) les rédige via `/api/robot/*` (clé `DELIVERY_ROBOT_TOKEN`, hors Access sur ce seul chemin). La génération ne valide ni ne publie jamais : la validation agence publie la pièce client dans l'espace du client.
+- Pilotage, analyse ponctuelle (décision 0011) : l'agence lance « Analyser mes campagnes » sur une période ; la session dédiée rédige synthèse et au plus six recommandations à partir d'un instantané figé (`analyses.data_json`) et de Meta en lecture seule ; l'agence relit et publie.
 - Le formulaire se définit **uniquement** dans `packages/domain/src/onboarding.ts` ; les clés de question sont stables (jamais renommées).
 - Défauts §20 appliqués : décision 0003.
 - Le rendez-vous validé se définit **uniquement** dans `packages/domain/src/appointments.ts`.
