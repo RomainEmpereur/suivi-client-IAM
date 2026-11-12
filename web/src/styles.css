@@ -330,3 +330,7 @@ tr.row-alert td { background: var(--alert-soft); }
   .print-only { display: block; }
   .agency-note, .banner { display: none !important; }
 }
+
+/* Guides : captures lisibles */
+.md-content img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; display: block; }
+.md-content.guide ol li { margin-bottom: 6px; }

@@ -9,6 +9,7 @@ import { OnboardingScreen } from './screens/Onboarding.tsx';
 import { DeliveryScreen } from './screens/Delivery.tsx';
 import { DeliverableScreen } from './screens/Deliverable.tsx';
 import { FeedbackScreen, ReportScreen } from './screens/Report.tsx';
+import { AgencyGuidesScreen, GuideScreen } from './screens/Guides.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -120,6 +121,7 @@ function Shell() {
           <nav class="nav-group" aria-label="Agence">
             <span class="label">Agence</span>
             <a class="nav-link" href={`/c/${activeClient}/delivery`} aria-current={clientId && screen === 'delivery' ? 'page' : undefined}>Delivery</a>
+            <a class="nav-link" href="/agence/guides" aria-current={path === '/agence/guides' ? 'page' : undefined}>Guides (rédaction)</a>
           </nav>
         )}
 
@@ -133,6 +135,7 @@ function Shell() {
 
       <main class="main" id="contenu">
         {path === '/agence' && isAgency && view === 'agence' ? <ConsoleScreen />
+          : path === '/agence/guides' && isAgency && view === 'agence' ? <AgencyGuidesScreen />
           : clientId ? <ClientScreen key={`${clientId}-${view}-${subId ?? ''}`} clientId={clientId} screen={screen} subId={subId} search={search} />
           : <Loading />}
       </main>
@@ -147,7 +150,7 @@ function ClientScreen({ clientId, screen, subId, search }: { clientId: string; s
     case 'pilotage': return <PilotageScreen clientId={clientId} search={search} />;
     case 'infrastructure': return <InfrastructureScreen clientId={clientId} />;
     case 'connexions': return <ConnectionsScreen clientId={clientId} />;
-    case 'guides': return <GuidesScreen clientId={clientId} />;
+    case 'guides': return subId ? <GuideScreen clientId={clientId} guideId={subId} /> : <GuidesScreen clientId={clientId} />;
     case 'rendez-vous': return <AppointmentsScreen clientId={clientId} />;
     case 'rapport': return <ReportScreen clientId={clientId} />;
     case 'feedback': return <FeedbackScreen clientId={clientId} />;

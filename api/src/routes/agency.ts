@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { computeAppointmentCounter, safeDiv, type AppointmentLike } from '@obsidian/domain';
 import type { AppEnv, ClientRow } from '../env.ts';
 import { requireAgency } from '../auth.ts';
-import { all } from '../db.ts';
+import { all, audit, first, newId, nowIso } from '../db.ts';
+import { HttpError, notFound } from '../errors.ts';
 import { clientTotals, periodBounds } from '../metrics.ts';
 import { currentPhaseProgress, overdueClientTasks } from './clients.ts';
 
@@ -82,4 +83,85 @@ agency.get('/console', async (c) => {
     rows,
     feedbackThemes: themes.filter((t) => t.recent > 0 || t.open > 0).map((t) => ({ category: t.category, recent: t.recent, open: t.open, clients: (t.clients ?? '').split(',').filter(Boolean) })),
   });
+});
+
+// ─── Guides (§11, §12 Édition) : communs ou épinglés pour un client ; brouillon / publié ─────
+
+interface GuideRow { id: string; client_id: string | null; title: string; kind: string; url: string | null; body_md: string | null; sort_order: number; published: number; updated_at: string }
+const serializeGuideAgency = (g: GuideRow) => ({
+  id: g.id, clientId: g.client_id, title: g.title, kind: g.kind, url: g.url, bodyMd: g.body_md, sortOrder: g.sort_order,
+  published: Boolean(g.published), updatedAt: g.updated_at,
+});
+
+agency.get('/guides', async (c) => {
+  const rows = await all<GuideRow>(c.env.DB, 'SELECT * FROM guides ORDER BY client_id IS NOT NULL, sort_order, title');
+  return c.json({ guides: rows.map(serializeGuideAgency) });
+});
+
+function guideInput(b: Record<string, unknown>, partial: boolean) {
+  const out: Record<string, unknown> = {};
+  if (!partial || 'title' in b) {
+    const t = typeof b.title === 'string' ? b.title.trim() : '';
+    if (!t || t.length > 120) throw new HttpError(400, 'Titre requis (120 caractères au plus).');
+    out.title = t;
+  }
+  if ('bodyMd' in b) {
+    if (b.bodyMd !== null && (typeof b.bodyMd !== 'string' || b.bodyMd.length > 100_000)) throw new HttpError(400, 'Contenu invalide.');
+    out.body_md = (b.bodyMd as string | null)?.trim() || null;
+  }
+  if ('url' in b) {
+    const u = typeof b.url === 'string' ? b.url.trim() : '';
+    if (u) { try { if (new URL(u).protocol !== 'https:') throw 0; } catch { throw new HttpError(400, 'Lien invalide (https).'); } }
+    out.url = u || null;
+  }
+  if ('kind' in b) {
+    if (!['page', 'pdf', 'video'].includes(b.kind as string)) throw new HttpError(400, 'Type invalide.');
+    out.kind = b.kind;
+  }
+  if ('sortOrder' in b) {
+    if (!Number.isInteger(b.sortOrder)) throw new HttpError(400, 'Ordre invalide.');
+    out.sort_order = b.sortOrder;
+  }
+  if ('clientId' in b) out.client_id = b.clientId || null;
+  if ('published' in b) out.published = b.published ? 1 : 0;
+  return out;
+}
+
+agency.post('/guides', async (c) => {
+  const user = c.get('user');
+  const b = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+  const v = guideInput(b, false);
+  if (v.client_id && !(await first(c.env.DB, 'SELECT id FROM clients WHERE id = ?1', v.client_id))) throw new HttpError(400, 'Client inconnu.');
+  const id = newId('gd');
+  await c.env.DB.prepare('INSERT INTO guides (id, client_id, title, kind, url, body_md, sort_order, published) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)')
+    .bind(id, v.client_id ?? null, v.title, v.kind ?? 'page', v.url ?? null, v.body_md ?? null, v.sort_order ?? 100).run();
+  await audit(c.env.DB, { clientId: (v.client_id as string) ?? null, actorId: user.id, actorEmail: user.email, action: 'guide_cree', objectType: 'guide', objectId: id, after: { title: v.title } });
+  return c.json({ id }, 201);
+});
+
+agency.patch('/guides/:id', async (c) => {
+  const user = c.get('user');
+  const g = await first<GuideRow>(c.env.DB, 'SELECT * FROM guides WHERE id = ?1', c.req.param('id'));
+  if (!g) throw notFound();
+  const v = guideInput(await c.req.json<Record<string, unknown>>().catch(() => ({})), true);
+  if (v.client_id && !(await first(c.env.DB, 'SELECT id FROM clients WHERE id = ?1', v.client_id))) throw new HttpError(400, 'Client inconnu.');
+  const keys = Object.keys(v);
+  if (!keys.length) throw new HttpError(400, 'Rien à modifier.');
+  await c.env.DB.prepare(`UPDATE guides SET ${keys.map((k, i) => `${k} = ?${i + 1}`).join(', ')}, updated_at = ?${keys.length + 1} WHERE id = ?${keys.length + 2}`)
+    .bind(...keys.map((k) => v[k]), nowIso(), g.id).run();
+  await audit(c.env.DB, { clientId: g.client_id, actorId: user.id, actorEmail: user.email, action: 'published' in v ? (v.published ? 'guide_publie' : 'guide_depublie') : 'guide_modifie', objectType: 'guide', objectId: g.id, before: { published: g.published }, after: { keys } });
+  return c.json({ ok: true });
+});
+
+agency.delete('/guides/:id', async (c) => {
+  const user = c.get('user');
+  const g = await first<GuideRow>(c.env.DB, 'SELECT * FROM guides WHERE id = ?1', c.req.param('id'));
+  if (!g) throw notFound();
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE tasks SET guide_id = NULL WHERE guide_id = ?1').bind(g.id),
+    c.env.DB.prepare('UPDATE connections SET guide_id = NULL WHERE guide_id = ?1').bind(g.id),
+    c.env.DB.prepare('DELETE FROM guides WHERE id = ?1').bind(g.id),
+  ]);
+  await audit(c.env.DB, { clientId: g.client_id, actorId: user.id, actorEmail: user.email, action: 'guide_supprime', objectType: 'guide', objectId: g.id, before: { title: g.title } });
+  return c.json({ ok: true });
 });

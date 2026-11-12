@@ -302,18 +302,32 @@ clients.get('/:clientId/guides', async (c) => {
   const client = c.get('client');
   const view = c.get('view');
   const filter = view === 'client' ? 'AND g.published = 1' : '';
-  const rows = await all<{ id: string; title: string; kind: string; url: string | null; r2_key: string | null; published: number; client_id: string | null; read_at: string | null }>(
+  const rows = await all<{ id: string; title: string; kind: string; url: string | null; r2_key: string | null; body_md: string | null; published: number; client_id: string | null; read_at: string | null }>(
     c.env.DB,
-    `SELECT g.id, g.title, g.kind, g.url, g.r2_key, g.published, g.client_id, r.read_at
+    `SELECT g.id, g.title, g.kind, g.url, g.r2_key, g.body_md, g.published, g.client_id, r.read_at
      FROM guides g LEFT JOIN guide_reads r ON r.guide_id = g.id AND r.client_id = ?1
      WHERE (g.client_id IS NULL OR g.client_id = ?1) ${filter}
      ORDER BY g.client_id IS NULL, g.sort_order`, client.id);
   return c.json({
     guides: rows.map((g) => ({
-      id: g.id, title: g.title, kind: g.kind, url: g.url, hasFile: Boolean(g.r2_key),
+      id: g.id, title: g.title, kind: g.kind, url: g.url, hasFile: Boolean(g.r2_key), hasBody: Boolean(g.body_md),
       pinned: g.client_id !== null, readAt: g.read_at, ...(view === 'agence' ? { published: Boolean(g.published) } : {}),
     })),
   });
+});
+
+/** Lecture d'un guide (page). Le client ne lit que les guides publiés, communs ou épinglés pour lui ; sa lecture est notée. */
+clients.get('/:clientId/guides/:guideId', async (c) => {
+  const client = c.get('client');
+  const view = c.get('view');
+  const g = await first<{ id: string; client_id: string | null; title: string; kind: string; url: string | null; body_md: string | null; published: number; updated_at: string }>(c.env.DB,
+    'SELECT id, client_id, title, kind, url, body_md, published, updated_at FROM guides WHERE id = ?1 AND (client_id IS NULL OR client_id = ?2)', c.req.param('guideId'), client.id);
+  if (!g || (view === 'client' && !g.published)) throw notFound();
+  if (c.get('user').role === 'client') {
+    await run(c.env.DB, `INSERT INTO guide_reads (client_id, guide_id, read_at) VALUES (?1, ?2, ?3) ON CONFLICT (client_id, guide_id) DO NOTHING`, client.id, g.id, nowIso());
+  }
+  return c.json({ guide: { id: g.id, title: g.title, kind: g.kind, url: g.url, bodyMd: g.body_md, updatedAt: g.updated_at, pinned: g.client_id !== null,
+    ...(view === 'agence' ? { published: Boolean(g.published) } : {}) } });
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

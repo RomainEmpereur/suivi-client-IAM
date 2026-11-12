@@ -398,29 +398,7 @@ function AgencyConnectionTools({ clientId, knownIds, onDone }: { clientId: strin
 
 // ─────────────────────────── Guides (§11) ───────────────────────────
 
-export function GuidesScreen({ clientId }: { clientId: string }) {
-  const { data, error } = useApi<{ guides: { id: string; title: string; kind: string; url: string | null; pinned: boolean; readAt: string | null; published?: boolean }[] }>(`/clients/${clientId}/guides`);
-  const lastSync = useLastSync(clientId);
-  const KIND: Record<string, string> = { pdf: 'PDF', video: 'Vidéo', page: 'Page' };
-  return (
-    <>
-      <PageHead a="Les" b="guides" lastSync={lastSync} sub="Les procédures pas à pas. « Mettre à jour ses rendez-vous » est la plus importante : sans elle, le compteur ne peut pas avancer." />
-      {error && <ErrorBox error={error} />}
-      {data && (
-        <div class="grid grid-3 stack">
-          {data.guides.map((g) => (
-            <article id={g.id} class="card edge deliverable" style={{ '--edge': g.published === false ? 'var(--agency)' : 'var(--border)' }}>
-              <div class="kpi-row"><span class="label">{KIND[g.kind] ?? g.kind}{g.pinned ? ' · pour vous' : ''}</span>{g.readAt && <Pill kind="neutral">Lu</Pill>}</div>
-              <h3>{g.title}</h3>
-              {g.url && <a class="btn" href={g.url} target="_blank" rel="noopener noreferrer">Ouvrir ↗</a>}
-              {g.published === false && <AgencyNote>ce guide est en brouillon, il n'est pas visible par le client.</AgencyNote>}
-            </article>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
+export { GuidesScreen } from './Guides.tsx';
 
 // ─────────────────────────── Rendez-vous (liste datée, §8 et §16 ; gestion, décision 0006) ───────────────────────────
 
