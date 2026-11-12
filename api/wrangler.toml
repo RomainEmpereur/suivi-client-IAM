@@ -31,6 +31,11 @@ ACCESS_TEAM_DOMAIN = "infrastructure-acquisition.cloudflareaccess.com"
 # « Application Audience (AUD) Tag » de l'application Access « Espace Obsidian — démo » (identifiant public, pas un secret)
 ACCESS_AUD = "793ae202165da0a102595bf35c44a8c0a994740495076043543d496e027a64e8"
 
+# Fichiers (guides PDF, ressources) : espace R2 privé, servi uniquement par l'API (mêmes droits que l'objet lié).
+[[env.demo.r2_buckets]]
+binding = "FILES"
+bucket_name = "espace-obsidian-demo-fichiers"
+
 [[env.demo.d1_databases]]
 binding = "DB"
 database_name = "espace-obsidian-demo"
@@ -51,6 +56,10 @@ DEV_AUTH = "0"
 ACCESS_TEAM_DOMAIN = "infrastructure-acquisition.cloudflareaccess.com"
 # AUD de l'application Access « Espace Obsidian — production » (identifiant public, pas un secret)
 ACCESS_AUD = "6b6a35235e43e249d7f21421433404944036eca9007a8a6cfba6c2e744434a1c"
+
+[[env.production.r2_buckets]]
+binding = "FILES"
+bucket_name = "espace-obsidian-fichiers"
 
 [[env.production.d1_databases]]
 binding = "DB"
