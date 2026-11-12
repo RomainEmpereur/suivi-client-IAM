@@ -42,7 +42,8 @@ export async function runGhlForClient(env: SyncEnv, clientId: string, opts: { fr
   const client = await env.DB.prepare('SELECT ghl_config_json FROM clients WHERE id = ?1').bind(clientId).first<{ ghl_config_json: string }>();
   const conn = await env.DB.prepare(`SELECT external_id, token_ciphertext FROM connections WHERE client_id = ?1 AND type = 'ghl'`)
     .bind(clientId).first<{ external_id: string | null; token_ciphertext: string | null }>();
-  const config = parseGhlConfig(client?.ghl_config_json, conn?.external_id ?? null);
+  // Sans réglage : tous les pipelines du sous-compte, ventes = opportunités « won », statuts des rendez-vous lus dans le calendrier.
+  const config = parseGhlConfig(client?.ghl_config_json, conn?.external_id ?? null) ?? (conn?.external_id ? 'auto' as const : null);
 
   const finish = async (ok: boolean, rows: number, error: string | null, state: string, clientAction: string | null) => {
     const now = new Date().toISOString();
@@ -62,8 +63,11 @@ export async function runGhlForClient(env: SyncEnv, clientId: string, opts: { fr
   try {
     const token = await decryptToken(conn.token_ciphertext, env.TOKEN_ENCRYPTION_KEY);
     const ghl = createGhlClient({ token, fetchImpl: opts.fetchImpl });
-    const pipelines = (await ghl.pipelines(config.locationId)).pipelines;
-    const resolved = 'pipelineNames' in config ? resolveGhlConfig(config, pipelines) : config;
+    const pipelines = (await ghl.pipelines(config === 'auto' ? conn.external_id! : config.locationId)).pipelines;
+    const resolved: GhlClientConfig = config === 'auto'
+      ? { locationId: conn.external_id!, pipelineIds: pipelines.map((p) => p.id), displayPipelineId: pipelines[0]?.id ?? null,
+          displayPipelineIds: pipelines.map((p) => p.id), calendarIds: [], postCallStageIds: [], noShowStageIds: [], wonStageIds: [], testTitlePrefixes: [] }
+      : 'pipelineNames' in config ? resolveGhlConfig(config, pipelines) : config;
     const result = await syncGhl(env.DB, clientId, resolved, ghl, { from, to }, Date.now(), pipelines);
     await finish(true, result.rowsWritten, null, 'ok', null);
     // Le CRM est désormais synchronisé : ses indicateurs ne sont plus « non synchronisés ».

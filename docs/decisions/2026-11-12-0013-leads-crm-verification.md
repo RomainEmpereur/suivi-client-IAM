@@ -15,3 +15,8 @@ ils doivent voir si le lead est bien entré dans le CRM. Les rendez-vous réserv
   la saisie n'est pas comptée une seconde fois dans les chiffres.
 - Les rendez-vous synchronisés portent désormais l'identifiant du contact GHL.
 - Migration 0011 : table `crm_leads`, colonne `appointments.ghl_contact_id`.
+
+## Complément : synchro GHL sans réglage (12 nov. 2026)
+Un sous-compte dont la clé est enregistrée mais sans réglage de pipeline n'est plus bloqué : la synchro lit **tous les pipelines**
+du sous-compte, compte une vente quand l'opportunité est au statut « won » dans GHL, et lit les statuts des rendez-vous dans le
+calendrier (présent / absent). Le message de synchro affiche les pipelines lus, pour affiner le réglage ensuite si besoin.

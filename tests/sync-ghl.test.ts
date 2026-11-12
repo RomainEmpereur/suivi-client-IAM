@@ -95,3 +95,17 @@ describe('Leads du CRM (décision 0013)', () => {
     expect(raw.prepare(`SELECT COUNT(*) n FROM crm_leads WHERE client_id = 'cl'`).get()).toEqual({ n: 3 });
   });
 });
+
+describe('Sans réglage de pipeline', () => {
+  it('une opportunité au statut « won » compte comme vente quand aucune étape gagnée n’est réglée', async () => {
+    const { d1, raw } = db();
+    const noStages = { ...config, wonStageIds: [], postCallStageIds: [], noShowStageIds: [] };
+    const wonFake = {
+      ...fake,
+      opportunities: async () => [{ id: 'ow', contactId: 'cw', pipelineId: 'p1', pipelineStageId: 's_post', status: 'won', createdAt: '2026-11-02T09:00:00Z', lastStatusChangeAt: '2026-11-06T09:00:00Z' }],
+      events: async () => [],
+    } as any;
+    await syncGhl(d1 as any, 'cl', noStages, wonFake, W, NOW);
+    expect(raw.prepare(`SELECT SUM(sales) s FROM metrics_daily WHERE client_id = 'cl' AND date = '2026-11-06'`).get()).toEqual({ s: 1 });
+  });
+});

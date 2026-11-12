@@ -13,6 +13,8 @@ import type { GhlClient, GhlEvent, GhlOpportunity } from '../../../packages/ghl/
 export interface GhlSyncResult {
   opportunities: number; contacts: number; appointments: number; rowsWritten: number;
   statuses: Record<string, number>;
+  /** Pipelines lus (noms), pour vérifier le réglage. */
+  pipelines?: string[];
 }
 
 const NR = 'non_rattache';
@@ -81,9 +83,11 @@ export async function syncGhl(
       const src = ghlAttribution(o).isMeta ? 'Meta' : 'Autre';
       sources.set(`${day}|${src}`, (sources.get(`${day}|${src}`) ?? 0) + 1);
     }
-    const won = list.filter((x) => config.wonStageIds.includes(x.pipelineStageId) && x.lastStageChangeAt)
-      .sort((a, b) => a.lastStageChangeAt!.localeCompare(b.lastStageChangeAt!))[0];
-    if (won && inWindow(parisDay(won.lastStageChangeAt!))) bump(parisDay(won.lastStageChangeAt!), keyOf(o), 'sales');
+    // Vente : étape « gagnée » réglée pour le client, ou, sans réglage, opportunité au statut « won » dans GHL.
+    const wonAt = (x: GhlOpportunity) => (config.wonStageIds.length ? x.lastStageChangeAt : x.lastStatusChangeAt ?? x.lastStageChangeAt);
+    const won = list.filter((x) => (config.wonStageIds.length ? config.wonStageIds.includes(x.pipelineStageId) : x.status === 'won') && wonAt(x))
+      .sort((a, b) => wonAt(a)!.localeCompare(wonAt(b)!))[0];
+    if (won && inWindow(parisDay(wonAt(won)!))) bump(parisDay(wonAt(won)!), keyOf(o), 'sales');
   }
 
   // ── Rendez-vous ─────────────────────────────────────────────
@@ -195,5 +199,6 @@ export async function syncGhl(
 
   // Une seule transaction : tout ou rien. Une coupure ne laisse jamais des compteurs remis à zéro sans être réécrits.
   await db.batch(statements);
-  return { opportunities: opps.length, contacts: byContact.size, appointments: events.length, rowsWritten: agg.size, statuses };
+  const pipeNames = (pipelines ?? []).filter((p) => config.pipelineIds.includes(p.id)).map((p) => p.name);
+  return { opportunities: opps.length, contacts: byContact.size, appointments: events.length, rowsWritten: agg.size, statuses, pipelines: pipeNames };
 }

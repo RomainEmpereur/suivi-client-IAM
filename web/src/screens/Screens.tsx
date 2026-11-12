@@ -323,12 +323,12 @@ function AgencyConnectionTools({ clientId, knownIds, onDone }: { clientId: strin
       setMsg(r.state === 'ok' ? { ok: true, text: 'Jeton enregistré (chiffré) et connexion testée.' } : { ok: false, text: `Jeton enregistré, mais le test a échoué : ${r.error}` });
     } catch (x) { setMsg({ ok: false, text: (x as Error).message }); } finally { setBusy(false); onDone(); }
   }
-  type R = { ok: boolean; error?: string; opportunities?: number; appointments?: number; rows?: number; spendEurCents?: number; residualDays?: number };
+  type R = { ok: boolean; error?: string; opportunities?: number; appointments?: number; rows?: number; spendEurCents?: number; residualDays?: number; pipelines?: string[] };
   const call = (body: Record<string, string>) =>
     api<{ ok: boolean; results: { meta?: R; ghl?: R } }>(`/clients/${clientId}/sync`, { method: 'POST', body: JSON.stringify(body) });
   const describe = (m?: R, g?: R) => [
     m && (m.ok ? `Meta : ${m.rows} lignes, ${formatEuros(m.spendEurCents ?? 0)} dépensés, rapprochés du total du compte` : `Meta en échec : ${m.error}`),
-    g && (g.ok ? `GHL : ${g.opportunities} opportunités, ${g.appointments} rendez-vous` : `GHL en échec : ${g.error}`),
+    g && (g.ok ? `GHL : ${g.opportunities} opportunités, ${g.appointments} rendez-vous${g.pipelines?.length ? ` (pipelines : ${g.pipelines.join(', ')})` : ''}` : `GHL en échec : ${g.error}`),
   ].filter(Boolean).join(' · ');
   const failText = (x: unknown) => {
     const m = (x as Error).message;

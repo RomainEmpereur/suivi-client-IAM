@@ -13,7 +13,7 @@ export class GhlError extends Error {
 
 export interface GhlOpportunity {
   id: string; contactId: string; pipelineId: string; pipelineStageId: string; status: string;
-  createdAt: string; lastStageChangeAt?: string; source?: string; name?: string;
+  createdAt: string; lastStageChangeAt?: string; lastStatusChangeAt?: string; source?: string; name?: string;
   contact?: { id?: string; name?: string; companyName?: string };
   attributions?: { utmAdId?: string; utmCampaignId?: string; utmCampaign?: string; utmSource?: string; adSource?: string }[];
 }
