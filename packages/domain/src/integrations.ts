@@ -35,3 +35,32 @@ export function applyIntegrations(html: string, codes: Integrations): { html: st
   }
   return { html: out, applied, missingMarkers };
 }
+
+/**
+ * Code prêt à coller dans l'élément « Code personnalisé » (Custom JS/HTML) d'une page GoHighLevel :
+ * l'élément attend un fragment, pas un document complet. On garde les feuilles et polices du <head> (link, style),
+ * le contenu du <body> et ses scripts ; on retire doctype, html, head, body, title et les meta (gérés par GHL).
+ * Les attributs class / style du <body> d'origine sont reportés sur un conteneur.
+ */
+export function ghlSnippet(html: string): string {
+  const src = html.replace(/<!doctype[^>]*>/i, '').trim();
+  const head = src.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)?.[1] ?? '';
+  const bodyMatch = src.match(/<body\b([^>]*)>([\s\S]*)<\/body>/i);
+  if (!bodyMatch && !/<html\b/i.test(src)) return src; // déjà un fragment
+  // Les règles CSS écrites pour html / body visent désormais le conteneur, pour ne pas toucher au reste de la page GHL.
+  const scope = (css: string) => css.replace(/(^|[\s,}>~+(])(html|body)(?=[\s,{.:#[>~+)])/g, '$1.obsidian-landing');
+  const keep = (head.match(/<link\b[^>]*>|<style\b[\s\S]*?<\/style>|<script\b[\s\S]*?<\/script>/gi) ?? [])
+    .filter((t) => !/<link\b[^>]*rel=["']?(icon|canonical|manifest)/i.test(t))
+    .map((t) => (/^<style/i.test(t) ? t.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/i, (_m, a: string, b: string, c: string) => a + scope(b) + c) : t));
+  const bodyAttrs = bodyMatch?.[1] ?? '';
+  const cls = bodyAttrs.match(/\sclass=(?:"([^"]*)"|'([^']*)')/i);
+  const sty = bodyAttrs.match(/\sstyle=(?:"[^"]*"|'[^']*')/i)?.[0] ?? '';
+  const body = bodyMatch?.[2] ?? src.replace(/<\/?html\b[^>]*>/gi, '').replace(/<head\b[\s\S]*?<\/head>/i, '');
+  return [
+    '<!-- Code généré par l\'espace Obsidian Partners : à coller dans un élément « Code personnalisé » GoHighLevel, section pleine largeur sans marges. -->',
+    ...keep,
+    `<div class="obsidian-landing${cls ? ` ${cls[1] ?? cls[2]}` : ''}"${sty}>`,
+    body.trim(),
+    '</div>',
+  ].join('\n');
+}

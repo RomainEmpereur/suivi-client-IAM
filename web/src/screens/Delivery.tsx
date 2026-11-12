@@ -5,7 +5,7 @@ import { AgencyNote, ErrorBox, Loading, PageHead, Pill } from '../components/ui.
 import { renderMarkdown } from '../markdown.ts';
 import { HtmlViewer, HtmlViewerButtons } from '../components/HtmlViewer.tsx';
 import { extractHtmlBlocks } from '../markdown.ts';
-import { INTEGRATIONS, applyIntegrations, integrationMarkers, type IntegrationKey } from '@obsidian/domain';
+import { INTEGRATIONS, applyIntegrations, ghlSnippet, integrationMarkers, type IntegrationKey } from '@obsidian/domain';
 
 interface Step {
   key: string; label: string; recurring: boolean; needsMechanism: boolean; deliverable: string | null;
@@ -18,6 +18,14 @@ interface Step {
 interface DeliveryData {
   gate: { ok: boolean; missing: string[] }; mechanism: string | null; driveFolderUrl: string | null;
   generationConfigured: boolean; steps: Step[];
+}
+
+/** Téléchargement local d'un texte (secours quand le presse-papiers est indisponible). */
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/html;charset=utf-8' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 async function copy(text: string) {
@@ -272,9 +280,15 @@ function IntegrationsPanel({ md, saved, busy, onSave }: {
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         {dirty && <button class="btn" disabled={busy} onClick={() => onSave({ vsl: codes.vsl.trim() || null, calendrier: codes.calendrier.trim() || null }, 'Intégrations enregistrées.')}>Enregistrer les codes</button>}
         <button class="ghost-btn" disabled={dirty} title={dirty ? 'Enregistrez d\'abord les codes' : undefined} onClick={() => setViewing(true)}>Voir la version finale</button>
-        <button class="ghost-btn" disabled={dirty} onClick={async () => setCopied(await copy(final.html) ? 'Code final copié : collez-le dans le bloc de code personnalisé de GHL.' : 'Copie impossible depuis ce navigateur.')}>Copier le code final</button>
+        <button class="btn" disabled={dirty} onClick={async () => setCopied(await copy(ghlSnippet(final.html)) ? `Code GoHighLevel copié (${ghlSnippet(final.html).length.toLocaleString('fr-FR')} caractères) : collez-le dans l'élément « Code personnalisé ».` : 'Copie impossible depuis ce navigateur : utilisez « Télécharger ».')}>Copier le code pour GoHighLevel</button>
+        <button class="ghost-btn" disabled={dirty} onClick={() => download('landing-ghl.html', ghlSnippet(final.html))}>Télécharger</button>
         {copied && <span class="small" style="color:var(--accent)">{copied}</span>}
       </div>
+      <ol class="small muted" style="margin:10px 0 0;padding-left:18px">
+        <li>Dans GoHighLevel, ouvrez la page du tunnel, ajoutez une section <strong>pleine largeur</strong> et mettez ses marges intérieures à 0.</li>
+        <li>Ajoutez-y une rangée d'une colonne, sans marges non plus, puis l'élément <strong>« Code personnalisé »</strong> (Custom JS/HTML).</li>
+        <li>Collez le code, enregistrez, prévisualisez sur ordinateur et sur mobile, puis publiez. Le titre et la description de la page se règlent dans les paramètres SEO de GHL.</li>
+      </ol>
       <p class="small muted" style="margin:8px 0 0">L'aperçu est isolé de l'espace pour la sécurité : certains lecteurs (Wistia) peuvent ne pas s'y lancer. Ils fonctionneront sur la page publiée dans GoHighLevel.</p>
       {viewing && <HtmlViewer block={{ kind: 'page', src: final.html }} title="Landing — version finale" onClose={() => setViewing(false)} />}
     </details>

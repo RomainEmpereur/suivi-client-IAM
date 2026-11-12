@@ -223,3 +223,21 @@ describe('Intégrations de la landing (décision 0017)', () => {
     expect((await step(call, B, 's2')).integrations).toBeNull();
   });
 });
+
+describe('Code pour GoHighLevel', () => {
+  it('transforme une page complète en fragment : polices et styles gardés, doctype / head / meta retirés, body en conteneur', async () => {
+    const { ghlSnippet } = await import('../packages/domain/src/index.ts');
+    const doc = '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>X</title><link rel="icon" href="/f.ico">'
+      + '<link href="https://fonts.googleapis.com/css2?family=Inter" rel="stylesheet"><style>.a{color:red}</style></head>'
+      + '<body class="lp" style="margin:0"><h1>Titre</h1><script>console.log(1)</script></body></html>';
+    const out = ghlSnippet(doc);
+    expect(out).not.toMatch(/<!doctype|<html|<head|<body|<title|<meta|rel="icon"/i);
+    expect(out).toContain('fonts.googleapis.com');
+    expect(out).toContain('<style>.a{color:red}</style>');
+    expect(out).toContain('<div class="obsidian-landing lp" style="margin:0">');
+    expect(ghlSnippet('<html><head><style>body{margin:0} html, body .x{a:b} .tbody{c:d}</style></head><body><p>x</p></body></html>'))
+      .toContain('<style>.obsidian-landing{margin:0} .obsidian-landing, .obsidian-landing .x{a:b} .tbody{c:d}</style>');
+    expect(out).toContain('<h1>Titre</h1><script>console.log(1)</script>');
+    expect(ghlSnippet('<section>déjà un fragment</section>')).toBe('<section>déjà un fragment</section>');
+  });
+});
