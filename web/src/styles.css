@@ -18,6 +18,8 @@
   --series-2: #b9a5ff;
   --primary: #4d8dff;         /* Bleu vif : titres de section, repères de navigation */
   --primary-soft: rgba(77, 141, 255, 0.14);
+  /* Couleurs de repère des sections (bordures fines des cartes), dans l'ordre de la page. */
+  --sec-1: #4d8dff; --sec-2: #2fc7b4; --sec-3: #a98bff; --sec-4: #f0a948; --sec-5: #f0708f;
 
   --font-sans: 'Jost', system-ui, sans-serif;
   --font-serif: 'Instrument Serif', Georgia, serif;
@@ -45,6 +47,7 @@
   --series-2: #7a5ad8;
   --primary: #1f5eff;
   --primary-soft: rgba(31, 94, 255, 0.09);
+  --sec-1: #1f5eff; --sec-2: #0d9488; --sec-3: #7c4dff; --sec-4: #c27803; --sec-5: #d6336c;
   color-scheme: light;
 }
 
@@ -125,9 +128,16 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .sync-stamp { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
 .agency-note { color: var(--text-2); font-size: 12.5px; font-style: italic; margin-top: 8px; }
 
-.section { margin-top: 30px; }
-.section-title { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; font-size: 22px; font-weight: 500; color: var(--primary); }
-.section-title::before { content: ''; align-self: center; width: 4px; height: 20px; border-radius: 2px; background: var(--primary); }
+.section { margin-top: 38px; --sec: var(--sec-1); }
+.section:nth-child(5n + 2 of .section) { --sec: var(--sec-2); }
+.section:nth-child(5n + 3 of .section) { --sec: var(--sec-3); }
+.section:nth-child(5n + 4 of .section) { --sec: var(--sec-4); }
+.section:nth-child(5n of .section) { --sec: var(--sec-5); }
+.section-title { display: flex; align-items: baseline; gap: 12px; margin: 0 0 16px; font-size: 27px; font-weight: 500; line-height: 1.15; color: var(--primary); }
+.section-title::before { content: ''; align-self: center; width: 5px; height: 26px; border-radius: 3px; background: var(--sec, var(--primary)); }
+/* Bordures fines colorées : chaque section a sa couleur, pour se repérer d'un coup d'œil. */
+.section .card, .section.card, .section .table-wrap { border-color: color-mix(in srgb, var(--sec) 42%, var(--border)); }
+.section .card.edge { border-left-color: var(--edge, var(--sec)); }
 .section-title em { font-family: var(--font-serif); font-weight: 400; font-size: 1.12em; }
 .section-title .num { font-family: var(--font-mono); font-size: 12px; color: var(--primary); opacity: .75; }
 
@@ -372,3 +382,4 @@ tr.row-alert td { background: var(--alert-soft); }
 .card.deliverable:hover { border-top-color: var(--primary); border-right-color: var(--primary); border-bottom-color: var(--primary); transform: translateY(-1px); }
 @media (prefers-reduced-motion: reduce) { .card.deliverable, .nav-link { transition: none; } .card.deliverable:hover { transform: none; } }
 .card.deliverable h3 { color: var(--text); }
+@media (max-width: 700px) { .section-title { font-size: 23px; } .section-title::before { height: 22px; } }
