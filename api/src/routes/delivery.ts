@@ -1,20 +1,23 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import {
-  ALL_QUESTIONS, DELIVERY_STEPS, DELIVERY_STEP_BY_KEY, MASTER_PROMPT, ONBOARDING_SECTIONS, deliveryGate, derived,
-  formatDate, formatEuros, formatInt, formatPercent, isAnswered, stepAvailability, stepInstructions, type DeliveryStep,
+  ALL_QUESTIONS, CHAIN_STEPS, DELIVERY_STEPS, DELIVERY_STEP_BY_KEY, MASTER_PROMPT, ONBOARDING_SECTIONS, deliveryGate, derived,
+  formatDate, formatEuros, formatInt, formatPercent, isAnswered, stepAvailability, stepInstructions, validationBlocker,
+  type DeliveryStep,
 } from '@obsidian/domain';
-import type { AppEnv, ClientRow } from '../env.ts';
+import type { AppEnv, Bindings, ClientRow } from '../env.ts';
 import { requireAgency } from '../auth.ts';
 import { scopeClient } from '../scope.ts';
-import { all, audit, first, newId, nowIso, run } from '../db.ts';
+import { all, audit, first, newId, nowIso } from '../db.ts';
 import { HttpError, notFound } from '../errors.ts';
 import { clientTotals, periodBounds } from '../metrics.ts';
 
 /**
- * Delivery piloté par l'espace (décision 0008). Agence uniquement, en vue agence.
- * La rédaction se fait dans le projet Claude de delivery (master prompt en instructions) ;
- * l'espace vérifie les conditions de lancement, enchaîne les étapes, prépare le brief à coller,
- * et garde le lien du résultat et la validation. Rien n'est envoyé à un service externe.
+ * Delivery automatique (décisions 0008 et 0009).
+ * - Après l'onboarding, l'agence lance la chaîne : Claude (tâche planifiée Claude Code, sur l'abonnement de l'agence)
+ *   rédige les étapes 0 à 7 dans l'ordre et dépose chaque pièce via /api/robot. Aucun modèle n'est appelé par le Worker.
+ * - L'agence relit, modifie, demande une reprise avec consigne, et valide. Une pièce client validée est publiée
+ *   aussitôt dans l'espace du client (livrable mis en page).
+ * - La génération ne valide ni ne publie jamais rien.
  */
 export const delivery = new Hono<AppEnv>();
 delivery.use('/:clientId/delivery', scopeClient);
@@ -22,18 +25,23 @@ delivery.use('/:clientId/delivery/*', scopeClient);
 delivery.use('/:clientId/delivery', async (c, next) => { requireAgency(c); await next(); });
 delivery.use('/:clientId/delivery/*', async (c, next) => { requireAgency(c); await next(); });
 
-/** Master prompt complet, à coller dans les instructions du projet Claude. */
+/** Master prompt complet (pour un travail manuel dans le projet Claude). Agence uniquement. */
 export const deliveryAgency = new Hono<AppEnv>();
 deliveryAgency.get('/delivery/master-prompt', (c) => { requireAgency(c); return c.json({ text: MASTER_PROMPT }); });
 
 interface StepRow {
   id: string; client_id: string; step: string; status: 'a_faire' | 'en_cours' | 'a_valider' | 'valide';
   result_url: string | null; notes: string | null; validated_at: string | null; updated_at: string;
+  content_md: string | null; content_version: number; content_source: string | null; generated_at: string | null;
+  queued_at: string | null; instruction: string | null; stale: number; last_error: string | null;
 }
-const STATUSES = ['a_faire', 'en_cours', 'a_valider', 'valide'] as const;
+
+const MAX_CONTENT = 200_000;
+const MAX_INSTRUCTION = 2_000;
 
 async function loadState(db: D1Database, clientId: string) {
-  const client = (await first<ClientRow>(db, 'SELECT * FROM clients WHERE id = ?1', clientId))!;
+  const client = await first<ClientRow>(db, 'SELECT * FROM clients WHERE id = ?1', clientId);
+  if (!client) throw notFound();
   const [answerRows, stepRows] = await Promise.all([
     all<{ question_key: string; answer: string | null }>(db, 'SELECT question_key, answer FROM onboarding_answers WHERE client_id = ?1', clientId),
     all<StepRow>(db, 'SELECT * FROM delivery_steps WHERE client_id = ?1', clientId),
@@ -41,19 +49,25 @@ async function loadState(db: D1Database, clientId: string) {
   const answers = Object.fromEntries(answerRows.map((a) => [a.question_key, a.answer]));
   const gate = deliveryGate(client.onboarding_submitted_at ?? null, answers);
   const byStep = new Map(stepRows.map((r) => [r.step, r]));
-  const validated = new Set(stepRows.filter((r) => r.status === 'valide').map((r) => r.step));
-  const mechanism = client.delivery_mechanism ?? null;
-  const avail = (key: string) => stepAvailability(key, { gateOk: gate.ok, mechanism, validated });
-  return { client, answers, gate, byStep, validated, mechanism, avail };
+  return { client, answers, gate, byStep, mechanism: client.delivery_mechanism ?? null };
 }
+type State = Awaited<ReturnType<typeof loadState>>;
 
-function serializeStep(s: DeliveryStep, row: StepRow | undefined, a: { available: boolean; reason: string | null }) {
+const hasContent = (r: StepRow | undefined) => Boolean(r?.content_md?.trim() || r?.result_url);
+
+function serializeStep(s: DeliveryStep, st: State) {
+  const row = st.byStep.get(s.key);
+  const a = stepAvailability(s.key, { gateOk: st.gate.ok });
   return {
     key: s.key, label: s.label, recurring: Boolean(s.recurring), needsMechanism: s.needsMechanism,
     deliverable: s.deliverable ? s.deliverable.title : null,
     status: row?.status ?? 'a_faire', resultUrl: row?.result_url ?? null, notes: row?.notes ?? null,
     validatedAt: row?.validated_at ?? null, updatedAt: row?.updated_at ?? null,
+    contentMd: row?.content_md ?? null, contentVersion: row?.content_version ?? 0, contentSource: row?.content_source ?? null,
+    generatedAt: row?.generated_at ?? null, queued: Boolean(row?.queued_at), queuedAt: row?.queued_at ?? null,
+    instruction: row?.instruction ?? null, stale: Boolean(row?.stale), lastError: row?.last_error ?? null,
     available: a.available, lockedReason: a.reason,
+    validationBlocker: validationBlocker(s, { hasContent: hasContent(row), mechanism: st.mechanism, stale: Boolean(row?.stale) }),
   };
 }
 
@@ -63,7 +77,8 @@ delivery.get('/:clientId/delivery', async (c) => {
     gate: st.gate,
     mechanism: st.mechanism,
     driveFolderUrl: st.client.drive_folder_url ?? null,
-    steps: DELIVERY_STEPS.map((s) => serializeStep(s, st.byStep.get(s.key), st.avail(s.key))),
+    generationConfigured: Boolean(c.env.DELIVERY_ROBOT_TOKEN),
+    steps: DELIVERY_STEPS.map((s) => serializeStep(s, st)),
   });
 });
 
@@ -73,42 +88,53 @@ function stepOr404(key: string) {
   return s;
 }
 
-/** Brief à coller dans le projet Claude : consignes de l'étape + dossier client + livrables validés en amont. */
+/** Brief d'une étape (copie manuelle possible dans le projet Claude). */
 delivery.get('/:clientId/delivery/:step/brief', async (c) => {
   const step = stepOr404(c.req.param('step'));
   const db = c.env.DB;
   const st = await loadState(db, c.get('client').id);
-  const a = st.avail(step.key);
-  if (!a.available) throw new HttpError(409, a.reason ?? 'Étape non disponible.');
+  if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies (onboarding et infos de base).');
   const weekly = step.key === 's8' ? await weeklyBlock(db, st.client) : null;
   return c.json({ text: buildBrief(step, st, weekly) });
 });
 
-function buildBrief(step: DeliveryStep, st: Awaited<ReturnType<typeof loadState>>, weekly: string | null): string {
+function buildBrief(step: DeliveryStep, st: State, weekly: string | null): string {
   const { client } = st;
+  const row = st.byStep.get(step.key);
   const out: string[] = [];
   out.push(`# ${client.name} — Étape ${step.label}`);
   out.push('');
-  out.push(`Applique le master prompt de delivery (instructions du projet) au client ${client.name}, pour l'étape ${step.label} uniquement. ` +
-    "Livre la pièce pour validation ; ne passe pas à l'étape suivante. Consomme les livrables validés ci-dessous, ne les réinvente pas.");
+  out.push(`Applique le master prompt de delivery au client ${client.name}, pour l'étape ${step.label} uniquement. ` +
+    'Consomme les pièces des étapes précédentes reproduites ci-dessous : ne les réinvente pas.');
   out.push('');
+  if (row?.instruction) {
+    out.push("## Consigne de reprise de l'agence (prioritaire)");
+    out.push(row.instruction);
+    out.push('');
+    if (row.content_md) {
+      out.push('## Version actuelle à reprendre');
+      out.push(row.content_md);
+      out.push('');
+    }
+  }
   if (st.mechanism) {
-    out.push(`**Mécanisme nommé choisi par le client (verrouillé) : ${st.mechanism}**`);
+    out.push(`**Mécanisme nommé retenu (à reprendre mot pour mot) : ${st.mechanism}**`);
     out.push('');
   }
 
-  const prior = DELIVERY_STEPS.slice(0, DELIVERY_STEPS.indexOf(step)).filter((s) => st.validated.has(s.key));
-  out.push('## Livrables validés en amont');
-  if (prior.length === 0) out.push('Aucun : c\'est la première étape.');
+  const prior = DELIVERY_STEPS.slice(0, DELIVERY_STEPS.indexOf(step)).filter((s) => !s.recurring && hasContent(st.byStep.get(s.key)));
+  out.push('## Pièces des étapes précédentes');
+  if (prior.length === 0) out.push("Aucune : c'est la première étape.");
   for (const s of prior) {
     const r = st.byStep.get(s.key)!;
-    out.push(`- ${s.label} : ${r.result_url ?? 'lien non renseigné'}${r.notes ? ` — ${r.notes.replace(/\s+/g, ' ')}` : ''}`);
+    out.push(`### ${s.label} (${r.status === 'valide' ? 'validée par l\'agence' : 'brouillon, pas encore validé'})`);
+    if (r.result_url) out.push(`Lien : ${r.result_url}`);
+    if (r.content_md) out.push(r.content_md.trim());
+    out.push('');
   }
-  out.push('');
 
   out.push('## Dossier client');
-  const site = st.answers.q02;
-  out.push(`- Site : ${site?.trim() || 'non renseigné'}`);
+  out.push(`- Site : ${st.answers.q02?.trim() || 'non renseigné'}`);
   out.push(client.drive_folder_url
     ? `- Ressources (logo, captures, témoignages, cas client) : dossier Drive ${client.drive_folder_url}`
     : '- Ressources : aucun dossier fourni. Avancer sans, et lister à la fin ce qui manquerait pour renforcer la pièce.');
@@ -138,6 +164,15 @@ function buildBrief(step: DeliveryStep, st: Awaited<ReturnType<typeof loadState>
 
   out.push("## Consignes de l'étape (extrait du master prompt)");
   out.push(stepInstructions(step));
+  out.push('');
+  out.push('## Ce que tu rends');
+  out.push("Le livrable complet en markdown (titres, listes, tableaux), prêt à être relu par l'agence puis lu par le client. " +
+    'Aucun commentaire sur ta démarche, aucune question en suspens dans le corps du texte : ce qui manque va dans une dernière section « À compléter ».');
+  if (step.key === 's1c') {
+    out.push(st.mechanism
+      ? `Garde le mécanisme retenu « ${st.mechanism} ».`
+      : 'Propose les trois noms de mécanisme demandés et indique celui que tu recommandes : il sera retenu pour toute la suite (l\'agence pourra le changer).');
+  }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
 
@@ -168,7 +203,85 @@ async function weeklyBlock(db: D1Database, client: ClientRow): Promise<string> {
   return lines.join('\n');
 }
 
+// ─── Écritures partagées ────────────────────────────────────────────────────────
+
+/** Ligne d'étape existante ou créée vide (INSERT OR IGNORE), pour les UPDATE qui suivent. */
+const ensureRow = (db: D1Database, clientId: string, step: string) =>
+  db.prepare('INSERT OR IGNORE INTO delivery_steps (id, client_id, step) VALUES (?1, ?2, ?3)').bind(newId('dls'), clientId, step);
+
+/** Une pièce amont a changé : les pièces aval déjà rédigées passent « à revoir ». */
+function markDownstreamStale(db: D1Database, clientId: string, step: DeliveryStep) {
+  const later = DELIVERY_STEPS.slice(DELIVERY_STEPS.indexOf(step) + 1).filter((s) => !s.recurring).map((s) => s.key);
+  if (later.length === 0) return null;
+  return db.prepare(
+    `UPDATE delivery_steps SET stale = 1 WHERE client_id = ?1 AND content_md IS NOT NULL AND step IN (${later.map((_, i) => `?${i + 2}`).join(',')})`,
+  ).bind(clientId, ...later);
+}
+
+function saveContent(db: D1Database, st: State, step: DeliveryStep, content: string, source: 'claude' | 'agence', now: string) {
+  const row = st.byStep.get(step.key);
+  const version = (row?.content_version ?? 0) + 1;
+  const stmts: D1PreparedStatement[] = [
+    ensureRow(db, st.client.id, step.key),
+    db.prepare('INSERT INTO delivery_versions (id, client_id, step, version, content_md, source, instruction) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
+      .bind(newId('dlv'), st.client.id, step.key, version, content, source, source === 'claude' ? row?.instruction ?? null : null),
+  ];
+  const s8 = Boolean(step.recurring);
+  stmts.push(db.prepare(
+    `UPDATE delivery_steps SET content_md = ?1, content_version = ?2, content_source = ?3,
+       status = ?4, validated_at = CASE WHEN ?4 = 'valide' THEN validated_at ELSE NULL END,
+       stale = 0, updated_at = ?5,
+       generated_at = CASE WHEN ?3 = 'claude' THEN ?5 ELSE generated_at END,
+       queued_at = CASE WHEN ?3 = 'claude' THEN NULL ELSE queued_at END,
+       instruction = CASE WHEN ?3 = 'claude' THEN NULL ELSE instruction END,
+       last_error = CASE WHEN ?3 = 'claude' THEN NULL ELSE last_error END
+     WHERE client_id = ?6 AND step = ?7`,
+  ).bind(content, version, source, s8 ? 'en_cours' : 'a_valider', now, st.client.id, step.key));
+  const stale = markDownstreamStale(db, st.client.id, step);
+  if (stale && content !== row?.content_md) stmts.push(stale);
+  return stmts;
+}
+
+function readContent(v: unknown): string {
+  if (typeof v !== 'string' || !v.trim()) throw new HttpError(400, 'Contenu vide.');
+  if (v.length > MAX_CONTENT) throw new HttpError(400, 'Contenu trop long.');
+  return v.replace(/\r\n/g, '\n');
+}
+
 const isHttps = (v: string) => { try { return new URL(v).protocol === 'https:'; } catch { return false; } };
+
+// ─── Agence ─────────────────────────────────────────────────────────────────────
+
+/** Lancer la chaîne : toutes les étapes 0 à 7 sans contenu passent en file de rédaction. */
+delivery.post('/:clientId/delivery/launch', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user');
+  const st = await loadState(db, c.get('client').id);
+  if (!st.gate.ok) throw new HttpError(409, `Delivery pas encore lançable. Manque : ${st.gate.missing.join(' · ')}.`);
+  const now = nowIso();
+  const todo = CHAIN_STEPS.filter((k) => !hasContent(st.byStep.get(k)) && !st.byStep.get(k)?.queued_at);
+  if (todo.length) {
+    await db.batch(todo.flatMap((k) => [
+      ensureRow(db, st.client.id, k),
+      db.prepare(`UPDATE delivery_steps SET queued_at = ?1, status = 'en_cours', last_error = NULL, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, k),
+    ]));
+  }
+  await audit(db, { clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_lance', objectType: 'client', objectId: st.client.id, after: { steps: todo } });
+  return c.json({ queued: todo.length });
+});
+
+/** Remettre en rédaction toutes les pièces « à revoir ». */
+delivery.post('/:clientId/delivery/regenerate-stale', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user');
+  const st = await loadState(db, c.get('client').id);
+  if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies.');
+  const now = nowIso();
+  const res = await db.prepare(`UPDATE delivery_steps SET queued_at = ?1, last_error = NULL, updated_at = ?1 WHERE client_id = ?2 AND stale = 1 AND queued_at IS NULL`)
+    .bind(now, st.client.id).run();
+  await audit(db, { clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_reprise_aval', objectType: 'client', objectId: st.client.id });
+  return c.json({ queued: res.meta.changes ?? 0 });
+});
 
 delivery.patch('/:clientId/delivery/:step', async (c) => {
   const step = stepOr404(c.req.param('step'));
@@ -177,121 +290,203 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || typeof body !== 'object') throw new HttpError(400, 'Corps de requête invalide.');
   const st = await loadState(db, c.get('client').id);
+  if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies (onboarding et infos de base).');
   const row = st.byStep.get(step.key);
-  const before = row ?? null;
+  const now = nowIso();
+  const stmts: D1PreparedStatement[] = [ensureRow(db, st.client.id, step.key)];
+  const changes: Record<string, unknown> = {};
 
-  let status = row?.status ?? 'a_faire';
-  let resultUrl = row?.result_url ?? null;
-  let notes = row?.notes ?? null;
-  let mechanism = st.mechanism;
-
+  if ('contentMd' in body) {
+    const content = readContent(body.contentMd);
+    if (content !== row?.content_md) {
+      stmts.push(...saveContent(db, st, step, content, 'agence', now));
+      changes.contentVersion = (row?.content_version ?? 0) + 1;
+    }
+  }
   if ('resultUrl' in body) {
     const v = body.resultUrl;
-    if (v === null || v === '') resultUrl = null;
-    else if (typeof v === 'string' && isHttps(v.trim())) resultUrl = v.trim();
-    else throw new HttpError(400, 'Le lien du résultat doit être une adresse https.');
+    let url: string | null;
+    if (v === null || v === '') url = null;
+    else if (typeof v === 'string' && isHttps(v.trim())) url = v.trim();
+    else throw new HttpError(400, 'Le lien doit être une adresse https.');
+    stmts.push(db.prepare('UPDATE delivery_steps SET result_url = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4').bind(url, now, st.client.id, step.key));
+    changes.resultUrl = url;
   }
   if ('notes' in body) {
     if (body.notes !== null && typeof body.notes !== 'string') throw new HttpError(400, 'Notes invalides.');
-    notes = (body.notes as string | null)?.trim() || null;
+    const notes = (body.notes as string | null)?.trim() || null;
     if (notes && notes.length > 4000) throw new HttpError(400, 'Notes trop longues (4 000 caractères au plus).');
+    stmts.push(db.prepare('UPDATE delivery_steps SET notes = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4').bind(notes, now, st.client.id, step.key));
   }
+  let mechanism = st.mechanism;
   if ('mechanism' in body) {
-    if (step.key !== 's1c') throw new HttpError(400, "Le mécanisme se choisit à l'étape 1C.");
+    if (step.key !== 's1c') throw new HttpError(400, "Le mécanisme se fixe à l'étape 1C.");
     const v = body.mechanism;
     if (v !== null && (typeof v !== 'string' || v.trim().length > 120)) throw new HttpError(400, 'Nom de mécanisme invalide.');
     const next = (v as string | null)?.trim() || null;
     if (next !== mechanism) {
-      const downstream = DELIVERY_STEPS.filter((s) => s.needsMechanism && (st.byStep.get(s.key)?.status ?? 'a_faire') !== 'a_faire');
-      if (downstream.length) throw new HttpError(409, `Le mécanisme est verrouillé : « ${downstream[0].label} » a déjà démarré.`);
+      stmts.push(db.prepare('UPDATE clients SET delivery_mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(next, now, st.client.id));
+      // Les pièces qui citent le mécanisme passent « à revoir ».
+      const keys = DELIVERY_STEPS.filter((s) => s.needsMechanism && !s.recurring).map((s) => s.key);
+      stmts.push(db.prepare(`UPDATE delivery_steps SET stale = 1 WHERE client_id = ?1 AND content_md IS NOT NULL AND step IN (${keys.map((_, i) => `?${i + 2}`).join(',')})`).bind(st.client.id, ...keys));
+      changes.mechanism = next;
       mechanism = next;
     }
   }
+  if (body.stale === false) {
+    stmts.push(db.prepare('UPDATE delivery_steps SET stale = 0, updated_at = ?1 WHERE client_id = ?2 AND step = ?3').bind(now, st.client.id, step.key));
+    changes.stale = false;
+  }
+  if (body.regenerate === true) {
+    const instruction = typeof body.instruction === 'string' ? body.instruction.trim().slice(0, MAX_INSTRUCTION) || null : null;
+    const earlierMissing = DELIVERY_STEPS.slice(0, DELIVERY_STEPS.indexOf(step)).some((s) => !s.recurring && !hasContent(st.byStep.get(s.key)) && !st.byStep.get(s.key)?.queued_at);
+    if (earlierMissing) throw new HttpError(409, "Lancez d'abord le delivery : une étape précédente n'est ni rédigée ni en file.");
+    stmts.push(db.prepare(`UPDATE delivery_steps SET queued_at = ?1, instruction = ?2, last_error = NULL,
+        status = CASE WHEN content_md IS NULL THEN 'en_cours' ELSE status END, updated_at = ?1 WHERE client_id = ?3 AND step = ?4`)
+      .bind(now, instruction, st.client.id, step.key));
+    changes.regenerate = { instruction };
+  }
+
   if ('status' in body) {
-    if (!STATUSES.includes(body.status as never)) throw new HttpError(400, 'Statut invalide.');
-    status = body.status as StepRow['status'];
-  }
-
-  // Démarrer ou faire avancer une étape exige qu'elle soit disponible.
-  if (status !== 'a_faire' && status !== (row?.status ?? 'a_faire')) {
-    const a = st.avail(step.key);
-    if (!a.available) throw new HttpError(409, a.reason ?? 'Étape non disponible.');
-  }
-  if (status === 'valide') {
-    if (step.recurring) throw new HttpError(400, 'Le point hebdomadaire est récurrent : il ne se valide pas.');
-    if (!resultUrl) throw new HttpError(400, 'Renseignez le lien du document validé avant de valider.');
-    if (step.key === 's1c' && !mechanism) throw new HttpError(400, 'Renseignez le nom du mécanisme choisi par le client avant de valider la page client.');
-  }
-  // Revenir sur une étape validée : seulement si la suivante n'a pas démarré.
-  if (row?.status === 'valide' && status !== 'valide') {
-    const i = DELIVERY_STEPS.indexOf(step);
-    const next = DELIVERY_STEPS[i + 1];
-    if (next && (st.byStep.get(next.key)?.status ?? 'a_faire') !== 'a_faire') {
-      throw new HttpError(409, `Revenez d'abord sur « ${next.label} », qui a déjà démarré.`);
+    const status = body.status;
+    if (status !== 'valide' && status !== 'a_valider') throw new HttpError(400, 'Statut invalide.');
+    if (status === 'valide') {
+      // On valide ce qui sera en base après les modifications ci-dessus.
+      const content = 'contentMd' in body ? readContent(body.contentMd) : row?.content_md ?? null;
+      const url = 'resultUrl' in body ? (changes.resultUrl as string | null) : row?.result_url ?? null;
+      const stale = body.stale === false ? false : Boolean(row?.stale) && !('contentMd' in body && content !== row?.content_md);
+      const blocker = validationBlocker(step, { hasContent: Boolean(content?.trim() || url), mechanism, stale });
+      if (blocker) throw new HttpError(409, blocker);
+      if (row?.queued_at && body.regenerate !== true) throw new HttpError(409, 'Claude est en train de reprendre cette pièce : attendez la nouvelle version.');
+      stmts.push(db.prepare(`UPDATE delivery_steps SET status = 'valide', validated_at = ?1, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, step.key));
+      if (step.deliverable) stmts.push(...await publishDeliverable(db, st.client.id, step, content, url, mechanism, now));
+    } else {
+      stmts.push(db.prepare(`UPDATE delivery_steps SET status = 'a_valider', validated_at = NULL, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, step.key));
     }
+    changes.status = status;
   }
 
+  await db.batch(stmts);
+  await audit(db, {
+    clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_etape_modifiee', objectType: 'delivery_step', objectId: `${st.client.id}:${step.key}`,
+    before: row ? { status: row.status, contentVersion: row.content_version, mechanism: st.mechanism } : null,
+    after: { step: step.key, ...changes },
+  });
+  const fresh = await loadState(db, st.client.id);
+  return c.json({ step: serializeStep(step, fresh), mechanism: fresh.mechanism });
+});
+
+/** Pièce client validée → livrable publié dans l'espace du client (créé, ou mis à jour avec une nouvelle version). */
+async function publishDeliverable(db: D1Database, clientId: string, step: DeliveryStep, content: string | null, url: string | null, mechanism: string | null, now: string) {
+  const d = step.deliverable!;
+  const existing = await first<{ id: string; content_md: string | null; external_url: string | null; version: number; visible_client: number }>(db,
+    `SELECT id, content_md, external_url, version, visible_client FROM deliverables WHERE client_id = ?1 AND origin = 'genere' AND json_extract(generation_json, '$.delivery_step') = ?2`,
+    clientId, step.key);
+  const gen = JSON.stringify({ delivery_step: step.key, source: 'master-prompt', mechanism });
+  if (!existing) {
+    return [db.prepare(
+      `INSERT INTO deliverables (id, client_id, type, phase, title, status, version, external_url, content_md, visible_client, published_at, origin, generation_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, 'valide', 1, ?6, ?7, 1, ?8, 'genere', ?9)`,
+    ).bind(newId('dl'), clientId, d.type, d.phase, d.title, url, content, now, gen)];
+  }
+  const changed = existing.content_md !== content || existing.external_url !== url;
+  return [db.prepare(
+    `UPDATE deliverables SET content_md = ?1, external_url = ?2, generation_json = ?3, visible_client = 1,
+       status = ?4, version = ?5, published_at = ?6, updated_at = ?6 WHERE id = ?7`,
+  ).bind(content, url, gen, changed && existing.visible_client ? 'mis_a_jour' : 'valide', changed ? existing.version + 1 : existing.version, now, existing.id)];
+}
+
+// ─── Génération automatique (tâche planifiée Claude Code) ───────────────────────
+
+/**
+ * Routes de la génération : authentifiées par la clé DELIVERY_ROBOT_TOKEN (secret du Worker, saisi par Romain),
+ * hors Cloudflare Access (application Access « bypass » limitée à /api/robot). Elles lisent la file et les briefs,
+ * et déposent du texte. Elles ne valident, ne publient et ne suppriment jamais rien.
+ */
+export const robot = new Hono<{ Bindings: Bindings }>();
+
+async function sha256(s: string) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
+}
+robot.use('*', async (c, next) => {
+  const expected = c.env.DELIVERY_ROBOT_TOKEN;
+  if (!expected || expected.length < 32) throw new HttpError(503, 'Génération automatique non configurée.');
+  const got = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') ?? '';
+  const [a, b] = await Promise.all([sha256(got), sha256(expected)]);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  if (diff !== 0) throw new HttpError(401, 'Clé invalide.');
+  await next();
+});
+
+const ROBOT_ACTOR = { actorId: 'robot-delivery', actorEmail: 'generation-automatique' };
+
+async function robotClient(c: Context<{ Bindings: Bindings }>) {
+  const st = await loadState(c.env.DB, c.req.param('clientId')!);
+  if (c.env.ENVIRONMENT === 'production' && st.client.is_demo) throw notFound();
+  if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies.');
+  return st;
+}
+
+/** File : étapes demandées, dans l'ordre de la chaîne pour chaque client. */
+robot.get('/delivery/queue', async (c) => {
+  const demo = c.env.ENVIRONMENT === 'production' ? 'AND cl.is_demo = 0' : '';
+  const rows = await all<{ client_id: string; name: string; step: string; queued_at: string; instruction: string | null }>(c.env.DB,
+    `SELECT ds.client_id, cl.name, ds.step, ds.queued_at, ds.instruction FROM delivery_steps ds JOIN clients cl ON cl.id = ds.client_id
+     WHERE ds.queued_at IS NOT NULL ${demo} ORDER BY ds.client_id`);
+  const order = (k: string) => DELIVERY_STEPS.findIndex((s) => s.key === k);
+  rows.sort((x, y) => x.client_id.localeCompare(y.client_id) || order(x.step) - order(y.step));
+  return c.json({
+    items: rows.map((r) => ({
+      clientId: r.client_id, clientName: r.name, step: r.step, label: DELIVERY_STEP_BY_KEY.get(r.step)?.label ?? r.step,
+      instruction: r.instruction, queuedAt: r.queued_at,
+    })),
+  });
+});
+
+robot.get('/clients/:clientId/delivery/:step/brief', async (c) => {
+  const step = stepOr404(c.req.param('step'));
+  const st = await robotClient(c);
+  const missing = DELIVERY_STEPS.slice(0, DELIVERY_STEPS.indexOf(step)).filter((s) => !s.recurring && !hasContent(st.byStep.get(s.key)));
+  if (!step.recurring && missing.length) throw new HttpError(409, `Rédigez d'abord : ${missing.map((s) => s.label).join(', ')}.`);
+  const weekly = step.key === 's8' ? await weeklyBlock(c.env.DB, st.client) : null;
+  return c.json({ masterPrompt: MASTER_PROMPT, brief: buildBrief(step, st, weekly) });
+});
+
+robot.put('/clients/:clientId/delivery/:step', async (c) => {
+  const step = stepOr404(c.req.param('step'));
+  const db = c.env.DB;
+  const st = await robotClient(c);
+  const body = await c.req.json().catch(() => null) as { contentMd?: unknown; mechanism?: unknown } | null;
+  const content = readContent(body?.contentMd);
   const now = nowIso();
-  const validatedAt = status === 'valide' ? (row?.status === 'valide' ? row.validated_at : now) : null;
-  const id = row?.id ?? newId('dls');
-  const stmts: D1PreparedStatement[] = [
-    db.prepare(
-      `INSERT INTO delivery_steps (id, client_id, step, status, result_url, notes, validated_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-       ON CONFLICT (client_id, step) DO UPDATE SET status = excluded.status, result_url = excluded.result_url,
-         notes = excluded.notes, validated_at = excluded.validated_at, updated_at = excluded.updated_at`,
-    ).bind(id, st.client.id, step.key, status, resultUrl, notes, validatedAt, now),
-  ];
-  if (mechanism !== st.mechanism) {
-    stmts.push(db.prepare('UPDATE clients SET delivery_mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(mechanism, now, st.client.id));
-  }
-
-  // Pièce client validée → fiche livrable (non publiée) tenue à jour avec le lien.
-  if (status === 'valide' && step.deliverable) {
-    const existing = await first<{ id: string; external_url: string | null }>(db,
-      `SELECT id, external_url FROM deliverables WHERE client_id = ?1 AND origin = 'genere' AND json_extract(generation_json, '$.delivery_step') = ?2`,
-      st.client.id, step.key);
-    const gen = JSON.stringify({ delivery_step: step.key, source: 'master-prompt', mechanism });
-    if (!existing) {
-      stmts.push(db.prepare(
-        `INSERT INTO deliverables (id, client_id, type, phase, title, status, external_url, visible_client, origin, generation_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'brouillon', ?6, 0, 'genere', ?7)`,
-      ).bind(newId('dl'), st.client.id, step.deliverable.type, step.deliverable.phase, step.deliverable.title, resultUrl, gen));
-    } else if (existing.external_url !== resultUrl) {
-      stmts.push(db.prepare('UPDATE deliverables SET external_url = ?1, generation_json = ?2, updated_at = ?3 WHERE id = ?4')
-        .bind(resultUrl, gen, now, existing.id));
-    }
+  const stmts = saveContent(db, st, step, content, 'claude', now);
+  let mechanism = st.mechanism;
+  if (step.key === 's1c' && !st.mechanism) {
+    const m = typeof body?.mechanism === 'string' ? body.mechanism.trim() : '';
+    if (!m || m.length > 120) throw new HttpError(400, 'Indiquez le nom de mécanisme recommandé (champ « mechanism », 120 caractères au plus).');
+    stmts.push(db.prepare('UPDATE clients SET delivery_mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(m, now, st.client.id));
+    mechanism = m;
   }
   await db.batch(stmts);
-
-  await audit(db, {
-    clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_etape_modifiee', objectType: 'delivery_step', objectId: id,
-    before: before && { status: before.status, resultUrl: before.result_url, mechanism: st.mechanism },
-    after: { step: step.key, status, resultUrl, mechanism },
-  });
-
-  const fresh = await loadState(db, st.client.id);
-  return c.json({ step: serializeStep(step, fresh.byStep.get(step.key), fresh.avail(step.key)), mechanism: fresh.mechanism });
+  await audit(db, { clientId: st.client.id, ...ROBOT_ACTOR, action: 'delivery_piece_deposee', objectType: 'delivery_step', objectId: `${st.client.id}:${step.key}`,
+    after: { step: step.key, version: (st.byStep.get(step.key)?.content_version ?? 0) + 1, mechanism } });
+  return c.json({ ok: true, mechanism });
 });
 
-/** Publier au client la fiche livrable d'une étape validée (le client la voit « à relire »). */
-delivery.post('/:clientId/delivery/:step/publish', async (c) => {
+/** Échec signalé : l'étape sort de la file avec son message, l'agence relance. */
+robot.post('/clients/:clientId/delivery/:step/error', async (c) => {
   const step = stepOr404(c.req.param('step'));
-  if (!step.deliverable) throw new HttpError(400, 'Cette étape produit un document interne : rien à publier au client.');
-  const db = c.env.DB;
-  const user = c.get('user');
-  const clientId = c.get('client').id;
-  const row = await first<StepRow>(db, 'SELECT * FROM delivery_steps WHERE client_id = ?1 AND step = ?2', clientId, step.key);
-  if (row?.status !== 'valide') throw new HttpError(409, "Validez l'étape avant de publier.");
-  const d = await first<{ id: string; visible_client: number }>(db,
-    `SELECT id, visible_client FROM deliverables WHERE client_id = ?1 AND origin = 'genere' AND json_extract(generation_json, '$.delivery_step') = ?2`,
-    clientId, step.key);
-  if (!d) throw notFound();
-  if (!d.visible_client) {
-    const now = nowIso();
-    await run(db, `UPDATE deliverables SET visible_client = 1, status = 'a_relire', published_at = ?1, updated_at = ?1 WHERE id = ?2`, now, d.id);
-    await audit(db, { clientId, actorId: user.id, actorEmail: user.email, action: 'livrable_publie', objectType: 'deliverable', objectId: d.id });
-  }
+  const st = await robotClient(c);
+  const body = await c.req.json().catch(() => null) as { message?: unknown } | null;
+  const message = typeof body?.message === 'string' ? body.message.trim().slice(0, 1000) : 'Échec sans message.';
+  const now = nowIso();
+  await c.env.DB.batch([
+    ensureRow(c.env.DB, st.client.id, step.key),
+    c.env.DB.prepare(`UPDATE delivery_steps SET queued_at = NULL, last_error = ?1,
+        status = CASE WHEN content_md IS NULL THEN 'a_faire' ELSE status END, updated_at = ?2 WHERE client_id = ?3 AND step = ?4`)
+      .bind(message, now, st.client.id, step.key),
+  ]);
+  await audit(c.env.DB, { clientId: st.client.id, ...ROBOT_ACTOR, action: 'delivery_echec', objectType: 'delivery_step', objectId: `${st.client.id}:${step.key}`, after: { message } });
   return c.json({ ok: true });
 });
-

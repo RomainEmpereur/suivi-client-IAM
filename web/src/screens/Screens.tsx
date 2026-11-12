@@ -18,7 +18,7 @@ const useLastSync = (clientId: string) => { const d = useApi<ClientOverview>(`/c
 
 interface Infra {
   phases: { key: string; label: string; state: PhaseState; startedAt: string | null; blocker: string | null }[];
-  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; clientSummary?: string | null; published: boolean; publishedAt?: string | null }[];
+  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; hasContent?: boolean; clientSummary?: string | null; published: boolean; publishedAt?: string | null }[];
   tasks: Record<'agence' | 'client', Task[]>;
 }
 interface Task { id: string; label: string; description: string | null; phase: string | null; status: string; dueDate: string | null; guideId: string | null; overdue: boolean; blocking: boolean }
@@ -95,7 +95,9 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
                     <h3>{d.title}</h3>
                     {d.clientSummary && <p class="small muted" style="margin:0">{d.clientSummary}</p>}
                     {d.publishedAt && <span class="mono small muted">Publié le {formatDate(d.publishedAt)}</span>}
-                    {d.externalUrl && d.status !== 'en_preparation'
+                    {d.hasContent && d.status !== 'en_preparation'
+                      ? <a class="btn" href={`/c/${clientId}/livrables/${d.id}`}>Lire le livrable</a>
+                      : d.externalUrl && d.status !== 'en_preparation'
                       ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">Ouvrir le livrable ↗</a>
                       : <button class="btn" disabled>Contenu disponible à la publication</button>}
                     {view === 'agence' && me.user.role === 'agence' && !d.published && (

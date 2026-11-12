@@ -299,3 +299,16 @@ tr.warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px;
 }
 .task-form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* Livrables rédigés (markdown mis en page) */
+.md-content { line-height: 1.6; overflow-wrap: anywhere; }
+.md-content h2, .md-content h3, .md-content h4, .md-content h5 { margin: 1.2em 0 .4em; line-height: 1.25; }
+.md-content h2:first-child, .md-content h3:first-child { margin-top: 0; }
+.md-content p, .md-content ul, .md-content ol, .md-content blockquote { margin: 0 0 .8em; }
+.md-content blockquote { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--text-2); }
+.md-content hr { border: 0; border-top: 1px solid var(--border); margin: 1.2em 0; }
+.md-content code { font-family: var(--mono, monospace); font-size: .92em; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
+.md-table { overflow-x: auto; margin: 0 0 .8em; }
+.md-table table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.md-table th, .md-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+.md-table th { background: var(--surface-2); }

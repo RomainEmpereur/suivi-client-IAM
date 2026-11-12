@@ -64,17 +64,24 @@ export function deliveryGate(onboardingSubmittedAt: string | null, answers: Reco
   return { ok: missing.length === 0, missing };
 }
 
-/** Disponibilité d'une étape : conditions de lancement, étape précédente validée, mécanisme choisi. */
-export function stepAvailability(
-  key: string,
-  ctx: { gateOk: boolean; mechanism: string | null; validated: Set<string> },
-): { available: boolean; reason: string | null } {
+/** Étapes rédigées d'un coup au lancement (0 à 7) ; le point hebdomadaire (8) se demande chaque semaine. */
+export const CHAIN_STEPS = DELIVERY_STEPS.filter((s) => !s.recurring).map((s) => s.key);
+
+/**
+ * Une étape est ouverte dès que les conditions de lancement sont remplies (décision 0009 : Claude rédige toute la chaîne,
+ * l'agence valide chaque pièce). La VSL et la suite ne se valident qu'une fois le mécanisme nommé fixé.
+ */
+export function stepAvailability(_key: string, ctx: { gateOk: boolean }): { available: boolean; reason: string | null } {
   if (!ctx.gateOk) return { available: false, reason: "Conditions de lancement non remplies (onboarding et infos de base)." };
-  const i = DELIVERY_STEPS.findIndex((s) => s.key === key);
-  const step = DELIVERY_STEPS[i];
-  if (i > 0 && !ctx.validated.has(DELIVERY_STEPS[i - 1].key)) return { available: false, reason: `En attente de la validation de « ${DELIVERY_STEPS[i - 1].label} ».` };
-  if (step.needsMechanism && !ctx.mechanism) return { available: false, reason: "Le client n'a pas encore choisi le nom du mécanisme (étape 1C)." };
   return { available: true, reason: null };
+}
+
+export function validationBlocker(step: DeliveryStep, ctx: { hasContent: boolean; mechanism: string | null; stale: boolean }): string | null {
+  if (step.recurring) return 'Le point hebdomadaire est récurrent : il ne se valide pas.';
+  if (!ctx.hasContent) return "Rien à valider : le livrable n'a pas encore de contenu.";
+  if (ctx.stale) return 'Une étape en amont a changé : régénérez cette pièce ou gardez-la telle quelle avant de valider.';
+  if ((step.needsMechanism || step.key === 's1c') && !ctx.mechanism) return 'Le nom du mécanisme n\'est pas fixé (étape 1C).';
+  return null;
 }
 
 /** Consignes d'une étape, extraites du master prompt (de son titre au titre de même niveau suivant). */

@@ -6,6 +6,7 @@ export interface DeliverableRow {
   id: string; type: string; phase: string; title: string; status: string; version: number;
   external_url: string | null; r2_key: string | null; client_summary: string | null;
   visible_client: number; published_at: string | null; origin: string; updated_at: string;
+  content_md?: string | null;
 }
 
 export function serializeDeliverable(d: DeliverableRow, audience: Audience) {
@@ -14,6 +15,7 @@ export function serializeDeliverable(d: DeliverableRow, audience: Audience) {
       id: d.id, type: d.type, phase: d.phase, title: d.title, status: d.status, version: d.version,
       externalUrl: d.external_url, hasFile: Boolean(d.r2_key), clientSummary: d.client_summary,
       published: Boolean(d.visible_client), publishedAt: d.published_at, origin: d.origin, updatedAt: d.updated_at,
+      hasContent: Boolean(d.content_md),
     };
   }
   const published = Boolean(d.visible_client) && d.status !== 'brouillon';
@@ -24,7 +26,7 @@ export function serializeDeliverable(d: DeliverableRow, audience: Audience) {
   return {
     id: d.id, type: d.type, phase: d.phase, title: d.title, status: d.status, version: d.version,
     externalUrl: d.external_url, hasFile: Boolean(d.r2_key), clientSummary: d.client_summary,
-    published: true, publishedAt: d.published_at,
+    published: true, publishedAt: d.published_at, hasContent: Boolean(d.content_md),
   };
 }
 

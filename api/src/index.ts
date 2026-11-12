@@ -9,7 +9,7 @@ import { dev } from './routes/dev.ts';
 import { onboarding } from './routes/onboarding.ts';
 import { appointments } from './routes/appointments.ts';
 import { connections } from './routes/connections.ts';
-import { delivery, deliveryAgency } from './routes/delivery.ts';
+import { delivery, deliveryAgency, robot } from './routes/delivery.ts';
 
 const app = new Hono<AppEnv>().basePath('/api');
 
@@ -23,6 +23,8 @@ app.notFound((c) => c.json({ error: 'Ressource introuvable.' }, 404));
 
 app.get('/health', (c) => c.json({ ok: true }));
 app.route('/dev', dev);
+// Génération automatique du delivery : clé dédiée, hors Access (décision 0009).
+app.route('/robot', robot);
 
 app.use('*', authenticate);
 app.route('/', me);

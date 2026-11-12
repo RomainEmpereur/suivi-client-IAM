@@ -241,6 +241,17 @@ clients.patch('/:clientId/phases/:phase', async (c) => {
 });
 
 /** Publication explicite d'un livrable (§12) : rien ne devient visible par effet de bord. */
+/** Lecture d'un livrable rédigé (texte mis en page). Le client ne lit que ce qui est publié. */
+clients.get('/:clientId/deliverables/:deliverableId', async (c) => {
+  const client = c.get('client');
+  const view = c.get('view');
+  const d = await first<DeliverableRow>(c.env.DB, 'SELECT * FROM deliverables WHERE id = ?1 AND client_id = ?2', c.req.param('deliverableId'), client.id);
+  if (!d) throw notFound();
+  const out = serializeDeliverable(d, view);
+  if (!out.published && view === 'client') return c.json({ deliverable: out, contentMd: null });
+  return c.json({ deliverable: out, contentMd: d.content_md ?? null });
+});
+
 clients.post('/:clientId/deliverables/:deliverableId/publish', async (c) => {
   requireAgency(c);
   const client = c.get('client');

@@ -7,6 +7,7 @@ import { ErrorBox, Loading } from './components/ui.tsx';
 import { DashboardScreen } from './screens/Dashboard.tsx';
 import { OnboardingScreen } from './screens/Onboarding.tsx';
 import { DeliveryScreen } from './screens/Delivery.tsx';
+import { DeliverableScreen } from './screens/Deliverable.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -49,9 +50,10 @@ function Shell() {
   const session = useSession();
   const { me, view, isAgency } = session;
 
-  const m = path.match(/^\/c\/([^/]+)(?:\/([^/]+))?/);
+  const m = path.match(/^\/c\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?/);
   const clientId = m?.[1] ?? null;
   const screen = m?.[2] ?? 'tableau-de-bord';
+  const subId = m?.[3] ?? null;
   const defaultClient = me.clients[0]?.id ?? null;
 
   useEffect(() => {
@@ -130,15 +132,16 @@ function Shell() {
 
       <main class="main" id="contenu">
         {path === '/agence' && isAgency && view === 'agence' ? <ConsoleScreen />
-          : clientId ? <ClientScreen key={`${clientId}-${view}`} clientId={clientId} screen={screen} search={search} />
+          : clientId ? <ClientScreen key={`${clientId}-${view}-${subId ?? ''}`} clientId={clientId} screen={screen} subId={subId} search={search} />
           : <Loading />}
       </main>
     </div>
   );
 }
 
-function ClientScreen({ clientId, screen, search }: { clientId: string; screen: string; search: string }) {
+function ClientScreen({ clientId, screen, subId, search }: { clientId: string; screen: string; subId: string | null; search: string }) {
   switch (screen) {
+    case 'livrables': return subId ? <DeliverableScreen clientId={clientId} deliverableId={subId} /> : <InfrastructureScreen clientId={clientId} />;
     case 'tableau-de-bord': return <DashboardScreen clientId={clientId} search={search} />;
     case 'pilotage': return <PilotageScreen clientId={clientId} />;
     case 'infrastructure': return <InfrastructureScreen clientId={clientId} />;

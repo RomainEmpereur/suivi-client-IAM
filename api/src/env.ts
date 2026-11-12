@@ -7,6 +7,8 @@ export interface Bindings {
   ACCESS_AUD?: string;
   /** Secret Worker : 32 octets base64, chiffrement des jetons (§16). */
   TOKEN_ENCRYPTION_KEY?: string;
+  /** Secret Worker : clé de la génération automatique du delivery (routes /api/robot, décision 0009). */
+  DELIVERY_ROBOT_TOKEN?: string;
 }
 
 export interface UserRow {

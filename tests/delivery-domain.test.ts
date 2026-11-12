@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DELIVERY_STEPS, MASTER_PROMPT, deliveryGate, stepAvailability, stepInstructions } from '../packages/domain/src/index.ts';
+import { DELIVERY_STEPS, MASTER_PROMPT, deliveryGate, stepAvailability, stepInstructions, validationBlocker } from '../packages/domain/src/index.ts';
 
 describe('Master prompt intégré', () => {
   it('le fichier généré correspond exactement au .md versionné', () => {
@@ -25,11 +25,13 @@ describe('Conditions de lancement', () => {
     expect(g.missing).toContain("Formulaire d'onboarding envoyé");
     expect(g.missing).toContain('Histoire du fondateur');
   });
-  it('enchaîne les étapes et exige le mécanisme à partir de la VSL', () => {
-    const v = new Set(['s0', 's1a', 's1b', 's1c']);
-    expect(stepAvailability('s1a', { gateOk: true, mechanism: null, validated: new Set() }).available).toBe(false);
-    expect(stepAvailability('s2', { gateOk: true, mechanism: null, validated: v }).reason).toMatch(/mécanisme/);
-    expect(stepAvailability('s2', { gateOk: true, mechanism: 'Le Système X', validated: v }).available).toBe(true);
-    expect(stepAvailability('s0', { gateOk: false, mechanism: null, validated: new Set() }).available).toBe(false);
+  it('ouvre toutes les étapes une fois les conditions remplies ; la VSL ne se valide pas sans mécanisme', () => {
+    expect(stepAvailability('s5', { gateOk: true }).available).toBe(true);
+    expect(stepAvailability('s0', { gateOk: false }).available).toBe(false);
+    const vsl = DELIVERY_STEPS.find((s) => s.key === 's2')!;
+    expect(validationBlocker(vsl, { hasContent: true, mechanism: null, stale: false })).toMatch(/mécanisme/);
+    expect(validationBlocker(vsl, { hasContent: true, mechanism: 'X', stale: true })).toMatch(/amont/);
+    expect(validationBlocker(vsl, { hasContent: false, mechanism: 'X', stale: false })).toMatch(/contenu/);
+    expect(validationBlocker(vsl, { hasContent: true, mechanism: 'X', stale: false })).toBeNull();
   });
 });
