@@ -18,7 +18,7 @@ Pour que nous puissions créer, diffuser et suivre vos campagnes, ajoutez Romain
 1. Dans le menu de gauche : **Utilisateurs** → **Personnes**.
 2. Cliquez sur **+ Ajouter** (ou « Inviter des personnes »).
 3. Saisissez l'adresse **contact@obsidianpartners.fr**.
-4. Accès à l'entreprise : choisissez **Accès partiel** (employé). L'accès complet (administrateur) n'est pas nécessaire.
+4. Accordez l'**accès total** : sous « Accès total », activez **Gérer**.
 5. Cliquez sur **Suivant**.
 
 ## Étape 3 — Donner l'accès aux éléments
@@ -27,12 +27,15 @@ Toujours dans la fenêtre d'invitation, cochez les éléments ci-dessous et les 
 
 | Élément | Quoi cocher | Autorisation |
 |---|---|---|
-| **Compte publicitaire** | votre compte publicitaire | **Contrôle total** (ou « Gérer les campagnes ») |
-| **Page Facebook** | votre page | Contenu, publicités et statistiques |
-| **Compte Instagram** | votre compte, s'il est relié | Contenu et publicités |
-| **Jeu de données / Pixel** | votre pixel | **Gérer** (ou contrôle total) |
+| **Page Facebook** | votre Page | **Contrôle total** |
+| **Compte publicitaire** | votre compte publicitaire | **Contrôle total** |
+| **Compte Instagram** | votre compte, s'il est relié | **Contrôle total** (Tout) |
+| **Ensemble de données (pixel)** | votre ensemble de données | **Contrôle total** |
+| **Domaine** | votre domaine, si vous en avez un | Attribuer |
 
-Cliquez ensuite sur **Inviter** (ou « Envoyer l'invitation »).
+Cliquez ensuite sur **« Attribuer les ressources »** (ou « Inviter ») pour terminer.
+
+> Vous partirez de zéro sur Meta ? Suivez plutôt le guide **« Configurer votre Meta Business Manager »** : il crée tout dans l'ordre et se termine par cette même étape.
 
 ## Étape 4 — Prévenir et vérifier
 

@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 const root = new URL('..', import.meta.url).pathname;
 const GUIDES = [
+  ['gd_meta_setup', 'Configurer votre Meta Business Manager', 10, 'docs/guides/1-setup-meta.md'],
   ['gd_ghl_navigation', 'Naviguer dans GoHighLevel', 20, 'docs/guides/2-naviguer-gohighlevel.md'],
   ['gd_espace_client', "Utiliser votre espace client", 30, 'docs/guides/3-espace-client.md'],
   ['gd_meta_personne', 'Ajouter Obsidian Partners comme personne dans Meta', 40, 'docs/guides/4-ajouter-obsidian-personne-meta.md'],
