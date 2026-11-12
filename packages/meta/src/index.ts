@@ -75,6 +75,10 @@ export function createMetaClient(opts: MetaClientOptions) {
       get<{ id: string; name: string; currency: string; timezone_name: string; account_status: number }>(
         `/${actId(accountId)}`, { fields: 'name,currency,timezone_name,account_status' }),
 
+    /** Diagnostic : comptes publicitaires que ce jeton peut lire. */
+    accessibleAccounts: () =>
+      paged<{ id: string; account_id: string; name: string }>('/me/adaccounts', { fields: 'account_id,name', limit: 200 }, 5),
+
     /** Chiffres par publicité et par jour (jours du fuseau du compte). */
     adInsightsDaily: (accountId: string, from: string, to: string) =>
       paged<MetaInsightRow>(`/${actId(accountId)}/insights`, {

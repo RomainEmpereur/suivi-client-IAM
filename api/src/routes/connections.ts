@@ -37,8 +37,19 @@ connections.put('/:clientId/connections/:type/token', async (c) => {
     catch (e) { state = 'casse'; error = e instanceof GhlError ? `Test refusé par GHL (HTTP ${e.status})` : 'Test impossible'; }
   } else {
     if (!/^(act_)?\d{5,20}$/.test(externalId)) throw new HttpError(400, 'Identifiant du compte publicitaire invalide (act_ suivi de chiffres).');
-    try { await createMetaClient({ token, maxAttempts: 2 }).adAccount(externalId); }
-    catch (e) { state = 'casse'; error = e instanceof MetaError ? `Test refusé par Meta (HTTP ${e.status}${e.code ? `, code ${e.code}` : ''})` : 'Test impossible'; }
+    const meta = createMetaClient({ token, maxAttempts: 2 });
+    try { await meta.adAccount(externalId); }
+    catch (e) {
+      state = 'casse';
+      error = e instanceof MetaError ? `Test refusé par Meta (HTTP ${e.status}${e.code ? `, code ${e.code}` : ''})` : 'Test impossible';
+      // Diagnostic : quels comptes ce jeton voit-il ? (identifiants et noms de comptes, aucune donnée personnelle)
+      try {
+        const seen = await meta.accessibleAccounts();
+        error += seen.length
+          ? `. Ce jeton ne voit pas ce compte ; il voit ${seen.length} compte(s) : ${seen.slice(0, 15).map((a) => `${a.name} (act_${a.account_id})`).join(', ')}${seen.length > 15 ? '…' : ''}.`
+          : ". Ce jeton ne voit aucun compte publicitaire : affectez les comptes à l'utilisateur système, ou régénérez le jeton avec ads_read.";
+      } catch { error += ". Le jeton n'a pas pu lister ses comptes : vérifiez la permission ads_read."; }
+    }
   }
   const cipher = await encryptToken(token, c.env.TOKEN_ENCRYPTION_KEY);
   const now = nowIso();
