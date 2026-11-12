@@ -12,6 +12,7 @@ import { FeedbackScreen, ReportScreen } from './screens/Report.tsx';
 import { AgencyGuidesScreen, GuideScreen } from './screens/Guides.tsx';
 import { CashScreen } from './screens/Cash.tsx';
 import { ClientEditScreen } from './screens/ClientEdit.tsx';
+import { FinanceScreen } from './screens/Finance.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -103,6 +104,7 @@ function Shell() {
         {isAgency && (
           <div class="nav-group">
             {view === 'agence' && <a class="nav-link" href="/agence" aria-current={path === '/agence' ? 'page' : undefined}>Console multi-clients</a>}
+            {view === 'agence' && <a class="nav-link" href="/agence/finance" aria-current={path === '/agence/finance' ? 'page' : undefined}>Suivi financier</a>}
             <label class="label" for="client-select" style="padding:10px 10px 6px">Client</label>
             <select id="client-select" class="client-select" value={activeClient ?? ''}
               onChange={(e) => { const v = (e.target as HTMLSelectElement).value; navigate(agencyClient ? `/agence/clients/${v}` : `/c/${v}/${clientId ? screen : 'tableau-de-bord'}`); }}>
@@ -140,6 +142,7 @@ function Shell() {
       <main class="main" id="contenu">
         {path === '/agence' && isAgency && view === 'agence' ? <ConsoleScreen />
           : path === '/agence/guides' && isAgency && view === 'agence' ? <AgencyGuidesScreen />
+          : path === '/agence/finance' && isAgency && view === 'agence' ? <FinanceScreen />
           : agencyClient && isAgency && view === 'agence' ? <ClientEditScreen key={agencyClient} clientId={agencyClient === 'nouveau' ? null : agencyClient} />
           : clientId ? <ClientScreen key={`${clientId}-${view}-${subId ?? ''}`} clientId={clientId} screen={screen} subId={subId} search={search} />
           : <Loading />}
