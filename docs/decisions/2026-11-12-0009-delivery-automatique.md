@@ -33,6 +33,9 @@ Contrainte : ne pas payer de clé API Anthropic.
 - Application Access « bypass » limitée à `espace-obsidian.obsidianpartners.workers.dev/api/robot` (production seulement).
 - Clé `DELIVERY_ROBOT_TOKEN` : secret du Worker de production, saisie par Romain ; même valeur enregistrée par Romain dans les
   secrets réseau de l'environnement Claude Code « suivi-client-iam » (injectée par le proxy, jamais visible).
-- Tâche planifiée « Delivery automatique Obsidian » : chaque heure de 7 h 17 à 21 h 17 (Paris), une nouvelle session lit la file,
-  rédige et dépose. Créée sans connecteurs : l'étape 1A se rabat sur la recherche web tant que le connecteur Meta
-  n'est pas ajouté à la tâche depuis claude.ai (Routines).
+- Tâche planifiée « Delivery automatique Obsidian » : chaque heure de 7 h 17 à 21 h 17 (Paris), elle relance une **session dédiée**
+  (« Delivery automatique Obsidian (session dédiée) ») qui lit la file, rédige et dépose. Une session dédiée plutôt qu'une session
+  neuve à chaque passage : les sessions lancées par une tâche n'ont pas les connecteurs du compte, la session dédiée a la bibliothèque
+  publicitaire Meta (lecture seule), indispensable à l'étape 1A.
+- Réseau de l'environnement Claude Code passé en accès complet (accord de Romain) pour ouvrir les pages des annonceurs concurrents
+  (analyse de funnel) ; les clés restent injectées uniquement vers leurs propres hôtes.
