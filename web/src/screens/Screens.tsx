@@ -98,7 +98,7 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
                     {d.hasContent && d.status !== 'en_preparation'
                       ? <a class="btn" href={`/c/${clientId}/livrables/${d.id}`}>Lire le livrable</a>
                       : d.externalUrl && d.status !== 'en_preparation'
-                      ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">Ouvrir le livrable ↗</a>
+                      ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">{/^https:\/\/(drive|docs)\.google\.com\//.test(d.externalUrl) ? 'Ouvrir dans Drive ↗' : 'Ouvrir le livrable ↗'}</a>
                       : <button class="btn" disabled>Contenu disponible à la publication</button>}
                     {view === 'agence' && me.user.role === 'agence' && !d.published && (
                       <>
