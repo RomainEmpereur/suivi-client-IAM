@@ -153,6 +153,8 @@ Le tout en CSS et JavaScript natifs dans le bloc unique, sans bibliothèque exte
 
 **Forme d'écriture** : chaque script s'écrit **en paragraphes**, comme il sera dit, un paragraphe par temps de la structure, avec son timecode en tête (« 0–3 s — … »). Pas de tableau. Les indications de tournage et d'incrustation suivent le script, en une courte liste.
 
+**Longueur** : un script dure **45 à 60 secondes**, soit **120 à 150 mots dits**. Une seule phrase par temps ne suffit pas : l'accroche tient en une ou deux phrases, mais sa journée, « ce n'est pas votre faute », la situation rêvée et le produit comme solution font chacun **deux à quatre phrases**, avec des détails concrets de sa journée, ses mots, une image précise et une preuve. Compte les mots de chaque script et indique-les à côté de sa durée.
+
 **Six scripts, deux vagues de trois** : trois au lancement, trois à J+14 pour remplacer ce qui ne tourne pas. Six et non dix, parce qu'une créative a besoin d'une centaine d'euros de dépense avant d'être jugeable.
 
 **Structure en six temps**, conservée : appel à l'audience dans les trois premières secondes · sa journée · ce n'est pas votre faute · sa situation rêvée et ceux qui y sont arrivés · le produit comme solution, avec le mécanisme nommé mot pour mot · un seul CTA, vers la présentation vidéo.
