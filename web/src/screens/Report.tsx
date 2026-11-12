@@ -47,6 +47,7 @@ export function ReportScreen({ clientId }: { clientId: string }) {
         {data && list.length === 0 && (
           <EmptyState title={agency ? 'Aucun rapport pour le moment' : 'Aucun rapport publié'}>
             {agency ? 'Choisissez une semaine ou un mois et générez le rapport.' : 'Vos rapports apparaissent ici dès qu’Obsidian Partners les publie.'}
+            {me.user.role === 'agence' && !agency && <div class="small" style="color:var(--agency);margin-top:8px">Aperçu agence : le client ne voit que les rapports publiés. Revenez en vue agence (← Agence) pour en générer un, puis « Publier au client ».</div>}
           </EmptyState>
         )}
         {list.length > 1 && (
@@ -250,7 +251,7 @@ export function FeedbackScreen({ clientId }: { clientId: string }) {
   return (
     <>
       <PageHead a="Vos" b="retours" sub="Un bug, un résultat qui vous déçoit, une demande, une question : décrivez-le ici, avec vos captures ou documents. Obsidian Partners traite votre demande et vous suivez son avancement ci-dessous." />
-      {isClient && <FeedbackForm clientId={clientId} onDone={reload} />}
+      {(isClient || me.user.role === 'agence' && view === 'client') && <FeedbackForm clientId={clientId} onDone={reload} preview={!isClient} />}
       {error && <ErrorBox error={error} />}
       {loading && !data && <Loading />}
       {data && data.feedback.length === 0 && <EmptyState title="Aucun retour pour le moment">{isClient ? 'Vos demandes et leur avancement apparaîtront ici.' : 'Le client n’a encore envoyé aucun retour.'}</EmptyState>}
@@ -262,7 +263,7 @@ export function FeedbackScreen({ clientId }: { clientId: string }) {
   );
 }
 
-function FeedbackForm({ clientId, onDone }: { clientId: string; onDone: () => void }) {
+function FeedbackForm({ clientId, onDone, preview }: { clientId: string; onDone: () => void; preview?: boolean }) {
   const [category, setCategory] = useState('demande');
   const [severity, setSeverity] = useState('normale');
   const [body, setBody] = useState('');
@@ -295,7 +296,9 @@ function FeedbackForm({ clientId, onDone }: { clientId: string; onDone: () => vo
     } catch (x) { setMsg({ ok: false, text: (x as ApiError).message }); } finally { setBusy(false); }
   }
   return (
-    <form class="card section" style="display:flex;flex-direction:column;gap:12px" onSubmit={send}>
+    <form class="card section" style="display:flex;flex-direction:column;gap:12px" onSubmit={(e) => { if (preview) { e.preventDefault(); return; } send(e); }}>
+      {preview && <div class="small" style="color:var(--agency)">Aperçu : c'est le formulaire que voit le client. En vue client (lecture seule), l'agence ne peut pas l'envoyer.</div>}
+      <fieldset disabled={preview} style="border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:12px;min-width:0">
       <div>
         <div class="label" style="margin-bottom:6px">Type de demande</div>
         <Segmented label="Type de demande" value={category} onChange={setCategory} options={Object.entries(CAT).map(([value, label]) => ({ value, label }))} />
@@ -325,6 +328,7 @@ function FeedbackForm({ clientId, onDone }: { clientId: string; onDone: () => vo
         <button class="btn" type="submit" disabled={busy || body.trim().length < 5}>{busy ? 'Envoi…' : 'Envoyer la demande'}</button>
         {msg && <span class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }}>{msg.text}</span>}
       </div>
+      </fieldset>
     </form>
   );
 }

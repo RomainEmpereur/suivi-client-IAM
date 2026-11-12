@@ -41,8 +41,9 @@ export function CashScreen({ clientId }: { clientId: string }) {
       <PageHead a="Encaissements" b="saisis" sub="Ce que vous avez réellement encaissé grâce aux campagnes. Ces montants alimentent le chiffre d'affaires encaissé et le ROAS du tableau de bord : sans saisie, ils restent « — »." />
       {error && <ErrorBox error={error} />}
       {err && <div class="banner alert" role="alert">{err}</div>}
-      {canWrite && (
-        <form class="card section" onSubmit={add} style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      {!canWrite && me.user.role === 'agence' && <div class="small" style="color:var(--agency);margin-bottom:8px">Aperçu : le client saisit ici ses encaissements. En vue client (lecture seule), l'agence ne peut pas en ajouter ; elle le peut depuis la vue agence.</div>}
+      {(canWrite || me.user.role === 'agence') && (
+        <form class="card section" onSubmit={(e) => { if (!canWrite) { e.preventDefault(); return; } add(e); }} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end', opacity: canWrite ? 1 : 0.6, pointerEvents: canWrite ? 'auto' : 'none' }}>
           <label class="field">Date d'encaissement
             <input type="date" required value={date} max={todayParis()} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
           </label>
