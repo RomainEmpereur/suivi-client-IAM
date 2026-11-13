@@ -14,13 +14,14 @@ import { CashScreen } from './screens/Cash.tsx';
 import { ClientEditScreen } from './screens/ClientEdit.tsx';
 import { FinanceScreen } from './screens/Finance.tsx';
 import { RequestsScreen } from './screens/Requests.tsx';
+import { OptimisationsScreen } from './screens/Optimisations.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
 
 const NAV = [
   { group: 'Accueil', items: [
-    ['tableau-de-bord', 'Tableau de bord'], ['pilotage', 'Pilotage'], ['infrastructure', 'Infrastructure'],
+    ['tableau-de-bord', 'Tableau de bord'], ['pilotage', 'Pilotage'], ['infrastructure', 'Infrastructure'], ['optimisations', 'Optimisations'],
     ['rendez-vous', 'Rendez-vous'], ['encaissements', 'Encaissements'], ['rapport', 'Rapport'], ['connexions', 'Connexions'],
   ] },
   { group: 'Démarrage et aide', items: [['onboarding', 'Onboarding'], ['guides', 'Guides'], ['feedback', 'Feedback']] },
@@ -167,6 +168,7 @@ function ClientScreen({ clientId, screen, subId, search }: { clientId: string; s
     case 'rapport': return <ReportScreen clientId={clientId} />;
     case 'feedback': return <FeedbackScreen clientId={clientId} />;
     case 'onboarding': return <OnboardingScreen clientId={clientId} />;
+    case 'optimisations': return <OptimisationsScreen clientId={clientId} search={search} />;
     case 'delivery': return <DeliveryScreen clientId={clientId} />;
     default: return <LaterScreen clientId={clientId} a="Page" b="introuvable" lot={1}>Cette page n'existe pas.</LaterScreen>;
   }

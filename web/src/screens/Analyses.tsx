@@ -189,6 +189,7 @@ function AgencyReco({ clientId, r, onChange }: { clientId: string; r: Reco; onCh
           {r.state !== 'traitee' && <button class="ghost-btn" onClick={() => patch({ state: 'traitee' })}>Marquer traitée</button>}
           {r.state !== 'ignoree' && <button class="ghost-btn" onClick={() => patch({ state: 'ignoree' })}>Ignorer</button>}
           {r.state !== 'ouverte' && <button class="ghost-btn" onClick={() => patch({ state: 'ouverte' })}>Rouvrir</button>}
+          <a class="ghost-btn" href={`/c/${clientId}/optimisations?nouvelle=1&source=analyse&ref=${encodeURIComponent(r.id)}&titre=${encodeURIComponent(r.title)}&constat=${encodeURIComponent(r.body)}`}>Créer une optimisation</a>
           <span class="muted">{r.published ? 'Visible du client' : 'Non publiée'}</span>
         </div>
       </div>

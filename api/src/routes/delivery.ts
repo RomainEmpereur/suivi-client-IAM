@@ -29,7 +29,7 @@ delivery.use('/:clientId/delivery/*', async (c, next) => { requireAgency(c); awa
 export const deliveryAgency = new Hono<AppEnv>();
 deliveryAgency.get('/delivery/master-prompt', (c) => { requireAgency(c); return c.json({ text: MASTER_PROMPT }); });
 
-interface StepRow {
+export interface StepRow {
   id: string; client_id: string; step: string; status: 'a_faire' | 'en_cours' | 'a_valider' | 'valide';
   result_url: string | null; notes: string | null; validated_at: string | null; updated_at: string;
   content_md: string | null; content_version: number; content_source: string | null; generated_at: string | null;
@@ -49,7 +49,7 @@ const SEP = '@';
 /** « s1c@vt_x » → { key: 's1c', vid: 'vt_x' } ; « s1c » → { key: 's1c', vid: '' }. */
 export function splitStepKey(raw: string) { const i = raw.indexOf(SEP); return i < 0 ? { key: raw, vid: '' } : { key: raw.slice(0, i), vid: raw.slice(i + 1) }; }
 
-async function loadState(db: D1Database, clientId: string, vid = '') {
+export async function loadState(db: D1Database, clientId: string, vid = '') {
   const client = await first<ClientRow>(db, 'SELECT * FROM clients WHERE id = ?1', clientId);
   if (!client) throw notFound();
   const vertical = vid ? await first<VerticalRow>(db, 'SELECT * FROM verticals WHERE id = ?1 AND client_id = ?2', vid, clientId) : null;
@@ -74,9 +74,9 @@ async function loadState(db: D1Database, clientId: string, vid = '') {
   return { client, answers, gate, byStep, connections, assets, vid, vertical, sk, mainByStep,
     mechanism: (vertical ? vertical.mechanism : client.delivery_mechanism) ?? null };
 }
-type State = Awaited<ReturnType<typeof loadState>>;
+export type State = Awaited<ReturnType<typeof loadState>>;
 
-const hasContent = (r: StepRow | undefined) => Boolean(r?.content_md?.trim() || r?.result_url);
+export const hasContent = (r: StepRow | undefined) => Boolean(r?.content_md?.trim() || r?.result_url);
 
 function serializeStep(s: DeliveryStep, st: State) {
   const row = st.byStep.get(s.key);
@@ -200,7 +200,7 @@ delivery.get('/:clientId/delivery/:step/brief', async (c) => {
   return c.json({ text: buildBrief(step, st, weekly) });
 });
 
-function buildBrief(step: DeliveryStep, st: State, weekly: string | null): string {
+export function buildBrief(step: DeliveryStep, st: State, weekly: string | null): string {
   const { client } = st;
   const row = st.byStep.get(step.key);
   const out: string[] = [];
@@ -326,7 +326,7 @@ function connectionsBlock(st: State): string {
 }
 
 /** Étape 8 : la semaine écoulée contre la précédente, depuis metrics_rollup. Aucune mesure → « — », jamais 0. */
-async function weeklyBlock(db: D1Database, client: ClientRow): Promise<string> {
+export async function weeklyBlock(db: D1Database, client: ClientRow): Promise<string> {
   const p = periodBounds(7);
   const [cur, prev] = await Promise.all([clientTotals(db, client.id, p.from, p.to), clientTotals(db, client.id, p.prevFrom, p.prevTo)]);
   const lines = [`## Chiffres de la semaine (${formatDate(p.from)} → ${formatDate(p.to)}) contre la précédente (${formatDate(p.prevFrom)} → ${formatDate(p.prevTo)})`];
@@ -355,7 +355,7 @@ async function weeklyBlock(db: D1Database, client: ClientRow): Promise<string> {
 // ─── Écritures partagées ────────────────────────────────────────────────────────
 
 /** Ligne d'étape existante ou créée vide (INSERT OR IGNORE), pour les UPDATE qui suivent. */
-const ensureRow = (db: D1Database, clientId: string, step: string) =>
+export const ensureRow = (db: D1Database, clientId: string, step: string) =>
   db.prepare('INSERT OR IGNORE INTO delivery_steps (id, client_id, step) VALUES (?1, ?2, ?3)').bind(newId('dls'), clientId, step);
 
 /** Une pièce amont a changé : les pièces aval déjà rédigées passent « à revoir ». */
@@ -391,7 +391,7 @@ function saveContent(db: D1Database, st: State, step: DeliveryStep, content: str
   return stmts;
 }
 
-function readContent(v: unknown): string {
+export function readContent(v: unknown): string {
   if (typeof v !== 'string' || !v.trim()) throw new HttpError(400, 'Contenu vide.');
   if (v.length > MAX_CONTENT) throw new HttpError(400, 'Contenu trop long.');
   return v.replace(/\r\n/g, '\n');
@@ -547,7 +547,7 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
 });
 
 /** Pièce client validée → livrable publié dans l'espace du client (créé, ou mis à jour avec une nouvelle version). */
-async function publishDeliverable(db: D1Database, clientId: string, step: DeliveryStep, content: string | null, url: string | null, mechanism: string | null, now: string, vertical: VerticalRow | null = null) {
+export async function publishDeliverable(db: D1Database, clientId: string, step: DeliveryStep, content: string | null, url: string | null, mechanism: string | null, now: string, vertical: VerticalRow | null = null) {
   const d = step.deliverable!;
   const key = vertical ? `${step.key}${SEP}${vertical.id}` : step.key;
   const existing = await first<{ id: string; content_md: string | null; external_url: string | null; version: number; visible_client: number }>(db,
@@ -590,7 +590,7 @@ robot.use('*', async (c, next) => {
   await next();
 });
 
-const ROBOT_ACTOR = { actorId: 'robot-delivery', actorEmail: 'generation-automatique' };
+export const ROBOT_ACTOR = { actorId: 'robot-delivery', actorEmail: 'generation-automatique' };
 
 async function robotClient(c: Context<{ Bindings: Bindings }>) {
   const st = await loadState(c.env.DB, c.req.param('clientId')!, vidOf(c.req.param('step') ?? ''));
@@ -598,6 +598,10 @@ async function robotClient(c: Context<{ Bindings: Bindings }>) {
   if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies.');
   return st;
 }
+
+export interface QueueItem { clientId: string; clientName: string; step: string; label: string; vertical: string | null; instruction: string | null; queuedAt: string }
+/** Autres files lues par le même robot, avec la même URL (optimisations, décision 0025 : clé « s4~<id> »). */
+export const QUEUE_EXTENSIONS: ((env: Bindings) => Promise<QueueItem[]>)[] = [];
 
 /** File : étapes demandées, dans l'ordre de la chaîne pour chaque client. */
 robot.get('/delivery/queue', async (c) => {
@@ -608,16 +612,17 @@ robot.get('/delivery/queue', async (c) => {
      WHERE ds.queued_at IS NOT NULL ${demo} ORDER BY ds.client_id`);
   const order = (k: string) => DELIVERY_STEPS.findIndex((s) => s.key === splitStepKey(k).key);
   rows.sort((x, y) => x.client_id.localeCompare(y.client_id) || splitStepKey(x.step).vid.localeCompare(splitStepKey(y.step).vid) || order(x.step) - order(y.step));
+  const extra = (await Promise.all(QUEUE_EXTENSIONS.map((f) => f(c.env)))).flat();
   return c.json({
-    items: rows.map((r) => ({
+    items: [...rows.map((r) => ({
       clientId: r.client_id, clientName: r.vname ? `${r.name} — verticale « ${r.vname} »` : r.name, step: r.step,
       label: DELIVERY_STEP_BY_KEY.get(splitStepKey(r.step).key)?.label ?? r.step, vertical: r.vname,
       instruction: r.instruction, queuedAt: r.queued_at,
-    })),
+    })), ...extra],
   });
 });
 
-robot.get('/clients/:clientId/delivery/:step/brief', async (c) => {
+robot.get('/clients/:clientId/delivery/:step{[^~/]+}/brief', async (c) => {
   const step = stepOr404(c.req.param('step'));
   const st = await robotClient(c);
   const missing = DELIVERY_STEPS.slice(0, DELIVERY_STEPS.indexOf(step)).filter((s) => !s.recurring && !hasContent(st.byStep.get(s.key)));
@@ -626,7 +631,7 @@ robot.get('/clients/:clientId/delivery/:step/brief', async (c) => {
   return c.json({ masterPrompt: MASTER_PROMPT, brief: buildBrief(step, st, weekly) });
 });
 
-robot.put('/clients/:clientId/delivery/:step', async (c) => {
+robot.put('/clients/:clientId/delivery/:step{[^~/]+}', async (c) => {
   const step = stepOr404(c.req.param('step'));
   const db = c.env.DB;
   const st = await robotClient(c);
@@ -650,7 +655,7 @@ robot.put('/clients/:clientId/delivery/:step', async (c) => {
 });
 
 /** Échec signalé : l'étape sort de la file avec son message, l'agence relance. */
-robot.post('/clients/:clientId/delivery/:step/error', async (c) => {
+robot.post('/clients/:clientId/delivery/:step{[^~/]+}/error', async (c) => {
   const step = stepOr404(c.req.param('step'));
   const st = await robotClient(c);
   const body = await c.req.json().catch(() => null) as { message?: unknown } | null;

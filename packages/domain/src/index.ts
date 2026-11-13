@@ -10,3 +10,4 @@ export * from './delivery.ts';
 export * from './pilotage.ts';
 export * from './integrations.ts';
 export * from './finance.ts';
+export * from './optimisations.ts';

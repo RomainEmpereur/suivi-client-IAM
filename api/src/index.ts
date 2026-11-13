@@ -17,6 +17,7 @@ import { cash } from './routes/cash.ts';
 import { finance } from './routes/finance.ts';
 import { resources } from './routes/resources.ts';
 import { requests } from './routes/requests.ts';
+import { optimisations } from './routes/optimisations.ts';
 
 const app = new Hono<AppEnv>().basePath('/api');
 
@@ -48,6 +49,7 @@ app.route('/clients', pilotage);
 app.route('/clients', reports);
 app.route('/clients', cash);
 app.route('/clients', resources);
+app.route('/clients', optimisations);
 app.route('/', deliveryAgency);
 app.route('/clients', clients);
 
