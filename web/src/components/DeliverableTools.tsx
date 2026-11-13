@@ -32,7 +32,7 @@ export function CommentsThread({ clientId, deliverableId }: { clientId: string; 
       <div class="card" style="display:flex;flex-direction:column;gap:12px">
         {error && <div class="banner alert" role="alert">{error.message}</div>}
         {err && <div class="banner alert" role="alert">{err}</div>}
-        {data && data.comments.length === 0 && <p class="small muted" style="margin:0">{me.user.role === 'client' ? 'Une question, une correction, un détail à revoir ? Écrivez-le ici : l\'équipe Obsidian Partners le voit dans votre espace.' : 'Aucun commentaire du client pour le moment.'}</p>}
+        {data && data.comments.length === 0 && <p class="small muted" style="margin:0">{me.user.role === 'client' || view === 'client' ? 'Une question, une correction, un détail à revoir ? Écrivez-le ici : l\'équipe Obsidian Partners le voit dans votre espace.' : 'Aucun commentaire du client pour le moment.'}</p>}
         {data?.comments.map((k) => (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '10px 12px', borderRadius: '8px', background: k.authorRole === 'agence' ? 'var(--primary-soft)' : 'var(--surface-2)' }}>
             <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
@@ -43,6 +43,13 @@ export function CommentsThread({ clientId, deliverableId }: { clientId: string; 
             <p class="small" style="margin:0;white-space:pre-wrap">{k.body}</p>
           </div>
         ))}
+        {!canWrite && me.user.role === 'agence' && (
+          <div style="display:flex;flex-direction:column;gap:8px;opacity:.6">
+            <textarea rows={3} disabled placeholder="Votre commentaire sur ce livrable…" />
+            <button class="btn" disabled style="align-self:flex-start">Envoyer</button>
+            <span class="small" style="color:var(--agency)">Aperçu : ici, le client écrit et envoie ses commentaires. En vue client, l'agence est en lecture seule ; repassez en vue agence pour lui répondre.</span>
+          </div>
+        )}
         {canWrite && (
           <form onSubmit={send} style="display:flex;flex-direction:column;gap:8px">
             <textarea rows={3} maxLength={4000} required value={text} placeholder={me.user.role === 'client' ? 'Votre commentaire sur ce livrable…' : 'Réponse au client…'}
