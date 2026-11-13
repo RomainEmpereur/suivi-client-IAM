@@ -23,7 +23,12 @@ export function minorUnits(v: string | undefined): number {
   return neg ? -n : n;
 }
 
-const LEAD_TYPES = ['lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead'];
+/**
+ * Leads = prospects des formulaires instantanés Meta uniquement (colonne « Prospects (formulaire) » du gestionnaire).
+ * Jamais « lead » (total formulaire + pixel) ni « offsite_conversion.fb_pixel_lead » : un pixel posé sur une page
+ * compte un prospect à chaque visite et gonflerait les leads (décision 0021).
+ */
+const LEAD_TYPES = ['onsite_conversion.lead_grouped', 'leadgen_grouped'];
 const LPV_TYPES = ['landing_page_view', 'omni_landing_page_view'];
 
 interface Measures { spendMinor: number; impressions: number; linkClicks: number; lpv: number; leads: number; plays: number; thruplays: number }

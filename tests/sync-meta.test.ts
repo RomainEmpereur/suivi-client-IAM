@@ -5,7 +5,11 @@ import { syncMeta, minorUnits, rateFor } from '../jobs/sync-daily/src/meta.ts';
 import { createMetaClient, type MetaClient, type MetaInsightRow } from '../packages/meta/src/index.ts';
 import { createTestDb } from './helpers/d1.ts';
 
-const act = (lead: number, lpv: number) => [{ action_type: 'lead', value: String(lead) }, { action_type: 'landing_page_view', value: String(lpv) }];
+// Le total « lead » et le pixel (visites de page) sont ignorés : seuls les prospects des formulaires comptent.
+const act = (lead: number, lpv: number) => [
+  { action_type: 'lead', value: String(lead + 7) }, { action_type: 'offsite_conversion.fb_pixel_lead', value: '7' },
+  { action_type: 'onsite_conversion.lead_grouped', value: String(lead) }, { action_type: 'landing_page_view', value: String(lpv) },
+];
 const adRows: MetaInsightRow[] = [
   { date_start: '2026-11-02', date_stop: '2026-11-02', ad_id: 'ad1', ad_name: 'Pub 1', campaign_id: 'camp1', campaign_name: 'Campagne 1', adset_id: 'as1',
     spend: '30.10', impressions: '1000', inline_link_clicks: '20', frequency: '1.2', actions: act(2, 15) },
