@@ -33,7 +33,7 @@ ads.get('/:clientId/publicites', async (c) => {
   return c.json({
     libraryUrl: client.facebook_page_id ? adLibraryUrl(client.facebook_page_id) : null,
     synced: Boolean(conn?.token),
-    syncedAt: rows[0]?.synced_at ?? null,
+    syncedAt: client.ads_live_synced_at ?? null,
     period: { from, to },
     ads: rows.map((r) => {
       const t = byAd.get(r.ad_id);

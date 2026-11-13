@@ -18,7 +18,7 @@ describe('Vos publicités : synchro', () => {
     raw.exec(`INSERT INTO meta_ads_live (client_id, ad_id, synced_at) VALUES ('cl', 'ancienne', 'x')`);
     expect(await syncActiveAds(d1, 'cl', 'act_1', fake(), '2026-11-13T05:00:00Z')).toBe(1);
     expect(raw.prepare(`SELECT ad_id, preview_url, page_id FROM meta_ads_live`).all()).toEqual([{ ad_id: 'ad1', preview_url: 'https://fb.me/adspreview/ads/abc', page_id: '123456789' }]);
-    expect(raw.prepare(`SELECT facebook_page_id p FROM clients`).get()).toEqual({ p: '123456789' });
+    expect(raw.prepare(`SELECT facebook_page_id p, ads_live_synced_at s FROM clients`).get()).toEqual({ p: '123456789', s: '2026-11-13T05:00:00Z' });
     // Une page saisie à la main n'est jamais écrasée ; plus aucune publicité active → liste vide.
     raw.exec(`UPDATE clients SET facebook_page_id = '999999'`);
     await syncActiveAds(d1, 'cl', 'act_1', fake([]));
@@ -46,6 +46,7 @@ describe('Vos publicités : écran', () => {
     const r = (await (await call(`/clients/${B}/publicites`, { as: CLIENT_B })).json()) as any;
     expect(r.libraryUrl).toBe('https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&view_all_page_id=123456789');
     expect(r.ads).toHaveLength(1);
+    expect(r.syncedAt).toBeNull(); // jamais lu par la synchro : l'écran le dit, au lieu de « en pause »
     expect(r.ads[0]).toMatchObject({ id: 'ad_x', previewUrl: 'https://fb.me/p', image: 'https://scontent/t.jpg', spendCents: null });
     expect((await call(`/clients/${B}/publicites`, { as: CLIENT_A })).status).toBe(404);
     const a = (await (await call(`/clients/${A}/publicites`, { as: AGENCE })).json()) as any;

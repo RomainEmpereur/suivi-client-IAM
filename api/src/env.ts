@@ -45,6 +45,7 @@ export interface ClientRow {
   drive_folder_url?: string | null;
   master_tracker_url?: string | null;
   facebook_page_id?: string | null;
+  ads_live_synced_at?: string | null;
   verticals_enabled?: number;
   delivery_mechanism?: string | null;
   is_demo: number;

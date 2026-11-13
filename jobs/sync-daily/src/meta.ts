@@ -189,6 +189,7 @@ export async function syncActiveAds(db: D1Database, clientId: string, accountId:
         j.value ->> '$.page_id', ?3 FROM json_each(?2) AS j WHERE true`).bind(clientId, JSON.stringify(rows), now),
     // Page Facebook : renseignée automatiquement si la fiche n'en a pas.
     db.prepare('UPDATE clients SET facebook_page_id = ?1 WHERE id = ?2 AND facebook_page_id IS NULL AND ?1 IS NOT NULL').bind(pageId, clientId),
+    db.prepare('UPDATE clients SET ads_live_synced_at = ?1 WHERE id = ?2').bind(now, clientId),
   ]);
   return rows.length;
 }

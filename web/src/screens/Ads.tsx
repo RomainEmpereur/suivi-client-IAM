@@ -27,8 +27,10 @@ export function AdsScreen({ clientId }: { clientId: string }) {
         right={library || undefined} />
 
       {data.ads.length === 0 ? (
-        <EmptyState title="Aucune publicité active en ce moment">
-          {data.synced
+        <EmptyState title={data.synced && !data.syncedAt ? 'Liste pas encore lue' : 'Aucune publicité active en ce moment'}>
+          {data.synced && !data.syncedAt
+            ? 'Pas encore lu dans Meta : la liste arrive à la prochaine synchronisation (chaque matin).'
+            : data.synced
             ? 'Les campagnes sont en pause ou en préparation. Les publicités apparaîtront ici le lendemain de leur lancement.'
             : data.libraryUrl ? 'Retrouvez les publicités actives de votre page dans la bibliothèque publicitaire Meta (bouton ci-dessus).' : 'Elles apparaîtront ici dès leur lancement.'}
         </EmptyState>
