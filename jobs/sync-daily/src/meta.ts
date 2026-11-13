@@ -167,3 +167,28 @@ export async function syncMeta(
   const total = out.reduce((s, r) => s + Number(r.spend_cents), 0);
   return { days: accRows.length, rows: out.length, spendEurCents: total, currency, residualDays };
 }
+
+/**
+ * Publicités actives (décision 0026) : visuel, texte et lien d'aperçu, réécrits à chaque passage.
+ * Un échec ici ne bloque jamais la synchro des chiffres : l'écran garde le dernier état connu.
+ */
+export async function syncActiveAds(db: D1Database, clientId: string, accountId: string, meta: MetaClient, now = new Date().toISOString()) {
+  const ads = await meta.activeAds(accountId);
+  const rows = ads.filter((a) => a.effective_status === 'ACTIVE').map((a) => ({
+    ad_id: a.id, name: a.name ?? null, campaign_name: a.campaign?.name ?? null, created_time: a.created_time ?? null,
+    object_type: a.creative?.object_type ?? null, title: a.creative?.title ?? null, body: a.creative?.body ?? null,
+    thumbnail_url: a.creative?.thumbnail_url ?? null, image_url: a.creative?.image_url ?? null,
+    preview_url: a.preview_shareable_link ?? null, page_id: a.creative?.actor_id ?? null,
+  }));
+  const pageId = rows.find((r) => r.page_id)?.page_id ?? null;
+  await db.batch([
+    db.prepare('DELETE FROM meta_ads_live WHERE client_id = ?1').bind(clientId),
+    db.prepare(`INSERT INTO meta_ads_live (client_id, ad_id, name, campaign_name, created_time, object_type, title, body, thumbnail_url, image_url, preview_url, page_id, synced_at)
+      SELECT ?1, j.value ->> '$.ad_id', j.value ->> '$.name', j.value ->> '$.campaign_name', j.value ->> '$.created_time', j.value ->> '$.object_type',
+        j.value ->> '$.title', j.value ->> '$.body', j.value ->> '$.thumbnail_url', j.value ->> '$.image_url', j.value ->> '$.preview_url',
+        j.value ->> '$.page_id', ?3 FROM json_each(?2) AS j WHERE true`).bind(clientId, JSON.stringify(rows), now),
+    // Page Facebook : renseignée automatiquement si la fiche n'en a pas.
+    db.prepare('UPDATE clients SET facebook_page_id = ?1 WHERE id = ?2 AND facebook_page_id IS NULL AND ?1 IS NOT NULL').bind(pageId, clientId),
+  ]);
+  return rows.length;
+}

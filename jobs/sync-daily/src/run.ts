@@ -8,7 +8,7 @@ import { createGhlClient, GhlError } from '../../../packages/ghl/src/index.ts';
 import { decryptToken } from '../../../api/src/crypto.ts';
 import { syncGhl, type GhlSyncResult } from './ghl.ts';
 import { createMetaClient, MetaError } from '../../../packages/meta/src/index.ts';
-import { syncMeta, type FxTable, type MetaSyncResult } from './meta.ts';
+import { syncActiveAds, syncMeta, type FxTable, type MetaSyncResult } from './meta.ts';
 
 export interface SyncEnv { DB: D1Database; TOKEN_ENCRYPTION_KEY?: string }
 
@@ -119,6 +119,8 @@ export async function runMetaForClient(env: SyncEnv, clientId: string, opts: { f
       const r = await syncMeta(env.DB, clientId, conn.external_id, meta, { from: a, to: b }, { fx: opts.fx });
       total.days += r.days; total.rows += r.rows; total.spendEurCents += r.spendEurCents; total.residualDays += r.residualDays; total.currency = r.currency;
     }
+    // Publicités actives pour l'écran client : best effort, ne casse jamais la synchro des chiffres.
+    await syncActiveAds(env.DB, clientId, conn.external_id, meta).catch((e) => console.error('Publicités actives', e instanceof Error ? e.message : 'erreur'));
     await finish(true, total.rows, null, 'ok', null);
     return { ok: true, result: total };
   } catch (e) {

@@ -109,6 +109,6 @@ describe('Client Meta : lecture seule', () => {
   it("le module n'expose aucune écriture", () => {
     const src = readFileSync(resolve(__dirname, '../packages/meta/src/index.ts'), 'utf8');
     expect(src).not.toMatch(/method:\s*'(POST|PUT|DELETE|PATCH)'/);
-    expect(Object.keys(createMetaClient({ token: 'x' })).sort()).toEqual(['accessibleAccounts', 'accountInsightsDaily', 'adAccount', 'adInsightsDaily', 'ads', 'campaigns']);
+    expect(Object.keys(createMetaClient({ token: 'x' })).sort()).toEqual(['accessibleAccounts', 'accountInsightsDaily', 'activeAds', 'adAccount', 'adInsightsDaily', 'ads', 'campaigns']);
   });
 });

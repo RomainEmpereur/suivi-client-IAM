@@ -238,7 +238,7 @@ function editableClient(cl: ClientRow) {
   try { thresholds = JSON.parse(cl.thresholds_json || '{}'); } catch { thresholds = {}; }
   return {
     id: cl.id, name: cl.name, slug: cl.slug, status: cl.status, offer: cl.offer, startDate: cl.start_date,
-    campaignsLaunchedAt: cl.campaigns_launched_at, driveFolderUrl: cl.drive_folder_url ?? null, masterTrackerUrl: cl.master_tracker_url ?? null, verticalsEnabled: Boolean(cl.verticals_enabled),
+    campaignsLaunchedAt: cl.campaigns_launched_at, driveFolderUrl: cl.drive_folder_url ?? null, masterTrackerUrl: cl.master_tracker_url ?? null, facebookPageId: cl.facebook_page_id ?? null, verticalsEnabled: Boolean(cl.verticals_enabled),
     adAccountCurrency: cl.ad_account_currency, adAccountTimezone: cl.ad_account_timezone,
     autoPublishRecos: Boolean(cl.auto_publish_recos), isDemo: Boolean(cl.is_demo),
     thresholds, defaultThresholds: DEFAULT_THRESHOLDS,
@@ -279,6 +279,12 @@ function parseClientFields(body: Record<string, unknown>) {
     if (v == null || v === '') out.master_tracker_url = null;
     else if (typeof v !== 'string' || !/^https:\/\/[^\s]+$/.test(v.trim()) || v.length > 500) throw new HttpError(400, 'Lien du master tracker invalide (https).');
     else out.master_tracker_url = v.trim();
+  }
+  if ('facebookPageId' in body) {
+    const v = body.facebookPageId;
+    if (v == null || v === '') out.facebook_page_id = null;
+    else if (typeof v !== 'string' || !/^\d{5,25}$/.test(v.trim())) throw new HttpError(400, "Identifiant de page Facebook invalide (chiffres uniquement).");
+    else out.facebook_page_id = v.trim();
   }
   if ('adAccountCurrency' in body) {
     if (typeof body.adAccountCurrency !== 'string' || !/^[A-Z]{3}$/.test(body.adAccountCurrency)) throw new HttpError(400, 'Devise invalide (ex. EUR).');

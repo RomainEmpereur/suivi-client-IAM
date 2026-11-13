@@ -5,7 +5,7 @@ import { ErrorBox, Loading, PageHead, SectionTitle } from '../components/ui.tsx'
 
 interface Editable {
   id: string; name: string; slug: string; status: string; offer: string | null; startDate: string | null;
-  campaignsLaunchedAt: string | null; driveFolderUrl: string | null; masterTrackerUrl: string | null; adAccountCurrency: string; adAccountTimezone: string;
+  campaignsLaunchedAt: string | null; driveFolderUrl: string | null; masterTrackerUrl: string | null; facebookPageId: string | null; adAccountCurrency: string; adAccountTimezone: string;
   autoPublishRecos: boolean; isDemo: boolean; verticalsEnabled: boolean;
   thresholds: Record<string, number>; defaultThresholds: Record<string, number | null>;
 }
@@ -48,11 +48,11 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
 
   useEffect(() => {
     const c = data?.client;
-    if (isNew) { setF({ name: '', status: 'onboarding', offer: '', startDate: '', campaignsLaunchedAt: '', driveFolderUrl: '', masterTrackerUrl: '', adAccountCurrency: 'EUR', adAccountTimezone: 'Europe/Paris', autoPublishRecos: true, verticalsEnabled: false }); setTh({}); return; }
+    if (isNew) { setF({ name: '', status: 'onboarding', offer: '', startDate: '', campaignsLaunchedAt: '', driveFolderUrl: '', masterTrackerUrl: '', facebookPageId: '', adAccountCurrency: 'EUR', adAccountTimezone: 'Europe/Paris', autoPublishRecos: true, verticalsEnabled: false }); setTh({}); return; }
     if (!c) return;
     setF({
       name: c.name, status: c.status, offer: c.offer ?? '', startDate: c.startDate ?? '', campaignsLaunchedAt: c.campaignsLaunchedAt ?? '',
-      driveFolderUrl: c.driveFolderUrl ?? '', masterTrackerUrl: c.masterTrackerUrl ?? '', adAccountCurrency: c.adAccountCurrency, adAccountTimezone: c.adAccountTimezone, autoPublishRecos: c.autoPublishRecos, verticalsEnabled: c.verticalsEnabled,
+      driveFolderUrl: c.driveFolderUrl ?? '', masterTrackerUrl: c.masterTrackerUrl ?? '', facebookPageId: c.facebookPageId ?? '', adAccountCurrency: c.adAccountCurrency, adAccountTimezone: c.adAccountTimezone, autoPublishRecos: c.autoPublishRecos, verticalsEnabled: c.verticalsEnabled,
     });
     setTh(Object.fromEntries(THRESHOLDS.map((t) => [t.key, toDisplay(t.unit, c.thresholds[t.key])])));
   }, [data, isNew]);
@@ -104,6 +104,7 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
               <span class="hint">Masque le bandeau d'avancement côté client.</span></label>
             <label class="field">Dossier Drive<input type="url" placeholder="https://drive.google.com/…" value={String(f.driveFolderUrl ?? '')} onInput={set('driveFolderUrl')} /></label>
             <label class="field">Master tracker<input type="url" placeholder="https://docs.google.com/spreadsheets/…" value={String(f.masterTrackerUrl ?? '')} onInput={set('masterTrackerUrl')} /></label>
+            <label class="field">ID de la page Facebook<input inputMode="numeric" placeholder="Rempli à la synchro Meta, sinon à saisir" value={String(f.facebookPageId ?? '')} onInput={set('facebookPageId')} /><span class="small muted">Sert au lien « bibliothèque publicitaire » de l'écran Vos publicités.</span></label>
             <label class="field">Devise du compte publicitaire<input maxLength={3} value={String(f.adAccountCurrency ?? 'EUR')} onInput={(e) => setF({ ...f, adAccountCurrency: (e.target as HTMLInputElement).value.toUpperCase() })} /></label>
             <label class="field">Fuseau du compte publicitaire<input value={String(f.adAccountTimezone ?? 'Europe/Paris')} onInput={set('adAccountTimezone')} /></label>
           </div>

@@ -20,6 +20,11 @@ export interface MetaInsightRow {
   actions?: MetaAction[]; video_play_actions?: MetaAction[]; video_thruplay_watched_actions?: MetaAction[];
 }
 
+export interface MetaLiveAd {
+  id: string; name?: string; created_time?: string; effective_status?: string; preview_shareable_link?: string;
+  campaign?: { name?: string };
+  creative?: { thumbnail_url?: string; image_url?: string; title?: string; body?: string; object_type?: string; actor_id?: string };
+}
 export interface MetaClientOptions {
   token: string;
   fetchImpl?: typeof fetch;
@@ -100,6 +105,15 @@ export function createMetaClient(opts: MetaClientOptions) {
       paged<{ id: string; name: string; daily_budget?: string; effective_status?: string }>(`/${actId(accountId)}/campaigns`, {
         fields: 'id,name,daily_budget,effective_status', limit: 500,
       }, 20),
+
+    /** Publicités actives avec leur visuel et leur lien d'aperçu (écran « Vos publicités », décision 0026). */
+    activeAds: (accountId: string) =>
+      paged<MetaLiveAd>(`/${actId(accountId)}/ads`, {
+        fields: 'id,name,created_time,effective_status,preview_shareable_link,campaign{name},'
+          + 'creative.thumbnail_width(640).thumbnail_height(640){thumbnail_url,image_url,title,body,object_type,actor_id}',
+        filtering: JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE'] }]),
+        limit: 100,
+      }, 10),
 
     /** Statut des publicités (affichage). */
     ads: (accountId: string) =>
