@@ -19,7 +19,7 @@ export const useLastSync = (clientId: string) => { const d = useApi<ClientOvervi
 
 interface Infra {
   phases: { key: string; label: string; state: PhaseState; startedAt: string | null; blocker: string | null }[];
-  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; hasContent?: boolean; clientSummary?: string | null; published: boolean; publishedAt?: string | null; comments?: number; clientComments?: number }[];
+  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; hasContent?: boolean; clientSummary?: string | null; published: boolean; publishedAt?: string | null; comments?: number; clientComments?: number; pendingClientComments?: number }[];
   tasks: Record<'agence' | 'client', Task[]>;
 }
 interface Task { id: string; label: string; description: string | null; phase: string | null; status: string; dueDate: string | null; guideId: string | null; overdue: boolean; blocking: boolean }
@@ -93,7 +93,7 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
               {data.deliverables.length === 0 && <EmptyState title="Aucun livrable pour le moment">Ils apparaissent ici au fil de la production.</EmptyState>}
               <div class="grid grid-2 stack">
                 {data.deliverables.map((d) => (
-                  <article class="card edge deliverable" style={{ '--edge': d.status === 'valide' ? 'var(--accent)' : d.status === 'a_relire' ? 'var(--warn)' : 'var(--border)' }}>
+                  <article class={`card edge deliverable ${editable && d.pendingClientComments ? 'has-request' : ''}`} style={{ '--edge': d.status === 'valide' ? 'var(--accent)' : d.status === 'a_relire' ? 'var(--warn)' : 'var(--border)' }}>
                     <div class="kpi-row">
                       <span class="label">{DELIVERABLE_TYPE_LABEL[d.type] ?? d.type}{d.version && d.version > 1 ? ` · v${d.version}` : ''}</span>
                       <Pill kind={d.status === 'valide' ? 'tenu' : d.status === 'a_relire' ? 'surveiller' : 'neutral'}>{DELIVERABLE_STATUS_LABEL[d.status]}</Pill>
@@ -106,7 +106,10 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
                       : d.externalUrl && d.status !== 'en_preparation'
                       ? <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">{/^https:\/\/(drive|docs)\.google\.com\//.test(d.externalUrl) ? 'Ouvrir dans Drive ↗' : 'Ouvrir le livrable ↗'}</a>
                       : <button class="btn" disabled>Contenu disponible à la publication</button>}
-                    {d.status !== 'en_preparation' && (d.published || editable) && (
+                    {editable && d.pendingClientComments
+                      ? <a class="urgent-badge" href={`/c/${clientId}/livrables/${d.id}#commentaires`}><span class="urgent-dot" aria-hidden="true" />{d.pendingClientComments} commentaire{d.pendingClientComments > 1 ? 's' : ''} du client à traiter →</a>
+                      : null}
+                    {!(editable && d.pendingClientComments) && d.status !== 'en_preparation' && (d.published || editable) && (
                       <a class="small" href={`/c/${clientId}/livrables/${d.id}#commentaires`}>
                         {d.comments ? `${d.comments} commentaire${d.comments > 1 ? 's' : ''}${editable && d.clientComments ? ` · ${d.clientComments} du client` : ''}` : 'Commenter ce livrable'} →
                       </a>
@@ -618,6 +621,7 @@ export function ConsoleScreen() {
   return (
     <>
       <PageHead a="Console" b="agence" sub="Tous les clients, triés par ce qui demande une action." right={<a class="btn" href="/agence/clients/nouveau">Nouveau client</a>} />
+      <PendingRequestsBanner />
       {error && <ErrorBox error={error} />}
       {loading && !data && <Loading />}
       {data && (
@@ -668,5 +672,19 @@ export function ConsoleScreen() {
         </>
       )}
     </>
+  );
+}
+
+/** Bandeau de la console : demandes clients en attente (décision 0022). */
+function PendingRequestsBanner() {
+  const { data } = useApi<{ total: number; comments: number; feedback: number }>('/agence/demandes/compteur');
+  if (!data || data.total === 0) return null;
+  return (
+    <a class="urgent-badge" href="/agence/demandes" style="margin-bottom:16px">
+      <span class="urgent-dot" aria-hidden="true" />
+      {data.comments > 0 && `${data.comments} livrable${data.comments > 1 ? 's' : ''} commenté${data.comments > 1 ? 's' : ''} par un client`}
+      {data.comments > 0 && data.feedback > 0 && ' · '}
+      {data.feedback > 0 && `${data.feedback} retour${data.feedback > 1 ? 's' : ''} à lire`} →
+    </a>
   );
 }

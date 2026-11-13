@@ -3,7 +3,7 @@ import { DELIVERABLE_STATUS_LABEL, DELIVERABLE_TYPE_LABEL, formatDateTime } from
 import { api, useApi } from '../api.ts';
 import { useSession } from '../session.ts';
 
-interface Comment { id: string; body: string; createdAt: string; authorRole: 'client' | 'agence'; author: string; mine: boolean }
+interface Comment { id: string; body: string; createdAt: string; authorRole: 'client' | 'agence'; author: string; mine: boolean; pending?: boolean }
 
 /** Fil de commentaires d'un livrable (décision 0020) : le client commente, l'agence répond en vue agence. */
 export function CommentsThread({ clientId, deliverableId }: { clientId: string; deliverableId: string }) {
@@ -18,9 +18,14 @@ export function CommentsThread({ clientId, deliverableId }: { clientId: string; 
     e.preventDefault();
     if (!text.trim()) return;
     setBusy(true); setErr(null);
-    try { await api(`/clients/${clientId}/deliverables/${deliverableId}/comments`, { method: 'POST', body: JSON.stringify({ body: text }) }); setText(''); reload(); }
+    try { await api(`/clients/${clientId}/deliverables/${deliverableId}/comments`, { method: 'POST', body: JSON.stringify({ body: text }) }); setText(''); reload(); window.dispatchEvent(new Event('demandes-maj')); }
     catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
   }
+  async function markHandled() {
+    setErr(null);
+    try { await api(`/agence/demandes/livrables/${deliverableId}/traiter`, { method: 'POST' }); reload(); window.dispatchEvent(new Event('demandes-maj')); } catch (x) { setErr((x as Error).message); }
+  }
+  const pending = (data?.comments ?? []).filter((k) => k.pending).length;
   async function remove(k: Comment) {
     if (!confirm('Supprimer ce commentaire ?')) return;
     try { await api(`/clients/${clientId}/deliverables/${deliverableId}/comments/${k.id}`, { method: 'DELETE' }); reload(); } catch (x) { setErr((x as Error).message); }
@@ -33,11 +38,19 @@ export function CommentsThread({ clientId, deliverableId }: { clientId: string; 
         {error && <div class="banner alert" role="alert">{error.message}</div>}
         {err && <div class="banner alert" role="alert">{err}</div>}
         {data && data.comments.length === 0 && <p class="small muted" style="margin:0">{me.user.role === 'client' || view === 'client' ? 'Une question, une correction, un détail à revoir ? Écrivez-le ici : l\'équipe Obsidian Partners le voit dans votre espace.' : 'Aucun commentaire du client pour le moment.'}</p>}
+        {view === 'agence' && pending > 0 && (
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span class="urgent-badge"><span class="urgent-dot" aria-hidden="true" />{pending} commentaire{pending > 1 ? 's' : ''} du client à traiter</span>
+            <span class="small muted">Répondre ci-dessous traite la demande.</span>
+            <button class="ghost-btn small" onClick={markHandled}>Marquer comme traité sans répondre</button>
+          </div>
+        )}
         {data?.comments.map((k) => (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '10px 12px', borderRadius: '8px', background: k.authorRole === 'agence' ? 'var(--primary-soft)' : 'var(--surface-2)' }}>
+          <div class={k.pending ? 'comment-pending' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '10px 12px', borderRadius: '8px', background: k.authorRole === 'agence' ? 'var(--primary-soft)' : 'var(--surface-2)' }}>
             <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
               <strong class="small">{k.author}</strong>
               <span class="mono small muted">{formatDateTime(k.createdAt)}</span>
+              {k.pending && <span class="pill corriger">À traiter</span>}
               {(k.mine || view === 'agence') && canWrite && <button class="ghost-btn small" style="margin-left:auto;padding:2px 8px" onClick={() => remove(k)}>Supprimer</button>}
             </div>
             <p class="small" style="margin:0;white-space:pre-wrap">{k.body}</p>

@@ -391,3 +391,20 @@ tr.row-alert td { background: var(--alert-soft); }
 .parcours-mark { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-mono); font-size: 12px; border: 1px solid var(--border); color: var(--text-2); }
 .parcours-item.done .parcours-mark { background: var(--primary); border-color: var(--primary); color: var(--accent-ink); font-size: 14px; }
 .parcours-item.next .parcours-mark { border-color: var(--primary); color: var(--primary); }
+
+/* Demandes clients (décision 0022) : ce qui attend une réponse de l'agence se voit tout de suite. */
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(216, 103, 93, .55); } 70% { box-shadow: 0 0 0 7px rgba(216, 103, 93, 0); } 100% { box-shadow: 0 0 0 0 rgba(216, 103, 93, 0); } }
+.urgent-badge {
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  padding: 6px 12px; border-radius: 999px; font-size: 14px; font-weight: 600;
+  background: var(--alert-soft); color: var(--alert); border: 1px solid var(--alert);
+}
+.urgent-badge:hover { text-decoration: none; filter: brightness(1.1); }
+.urgent-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--alert); animation: pulse-ring 1.6s infinite; flex: none; }
+.nav-count {
+  margin-left: auto; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; display: inline-grid; place-items: center;
+  background: var(--alert); color: #fff; font-size: 12px; font-weight: 700; animation: pulse-ring 1.6s infinite;
+}
+.card.deliverable.has-request { border-color: var(--alert); }
+.comment-pending { outline: 1px solid var(--alert); }
+@media (prefers-reduced-motion: reduce) { .urgent-dot, .nav-count { animation: none; } }

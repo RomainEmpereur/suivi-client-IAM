@@ -13,6 +13,7 @@ import { AgencyGuidesScreen, GuideScreen } from './screens/Guides.tsx';
 import { CashScreen } from './screens/Cash.tsx';
 import { ClientEditScreen } from './screens/ClientEdit.tsx';
 import { FinanceScreen } from './screens/Finance.tsx';
+import { RequestsScreen } from './screens/Requests.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -104,6 +105,7 @@ function Shell() {
         {isAgency && (
           <div class="nav-group">
             {view === 'agence' && <a class="nav-link" href="/agence" aria-current={path === '/agence' ? 'page' : undefined}>Console multi-clients</a>}
+            {view === 'agence' && <RequestsLink path={path} />}
             {view === 'agence' && <a class="nav-link" href="/agence/finance" aria-current={path === '/agence/finance' ? 'page' : undefined}>Suivi financier</a>}
             <label class="label" for="client-select" style="padding:10px 10px 6px">Client</label>
             <select id="client-select" class="client-select" value={activeClient ?? ''}
@@ -143,6 +145,7 @@ function Shell() {
         {path === '/agence' && isAgency && view === 'agence' ? <ConsoleScreen />
           : path === '/agence/guides' && isAgency && view === 'agence' ? <AgencyGuidesScreen />
           : path === '/agence/finance' && isAgency && view === 'agence' ? <FinanceScreen />
+          : path === '/agence/demandes' && isAgency && view === 'agence' ? <RequestsScreen />
           : agencyClient && isAgency && view === 'agence' ? <ClientEditScreen key={agencyClient} clientId={agencyClient === 'nouveau' ? null : agencyClient} />
           : clientId ? <ClientScreen key={`${clientId}-${view}-${subId ?? ''}`} clientId={clientId} screen={screen} subId={subId} search={search} />
           : <Loading />}
@@ -195,4 +198,23 @@ function DevLogin({ error }: { error: ApiError }) {
 function DevSwitch() {
   if (!store.get('devUser')) return null;
   return <button class="ghost-btn small" onClick={() => { store.set('devUser', null); store.set('view', null); location.href = '/'; }}>Changer d'identité (dev)</button>;
+}
+
+/** Lien « Demandes clients » avec le nombre de demandes en attente, rafraîchi à chaque navigation et toutes les 2 minutes. */
+function RequestsLink({ path }: { path: string }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((x) => x + 1), 120_000);
+    const on = () => setTick((x) => x + 1);
+    window.addEventListener('demandes-maj', on);
+    return () => { window.clearInterval(t); window.removeEventListener('demandes-maj', on); };
+  }, []);
+  const { data } = useApi<{ total: number; comments: number; feedback: number }>('/agence/demandes/compteur', [path, tick]);
+  const n = data?.total ?? 0;
+  return (
+    <a class="nav-link" href="/agence/demandes" aria-current={path === '/agence/demandes' ? 'page' : undefined}
+      title={data ? `${data.comments} commentaire(s) sur des livrables, ${data.feedback} retour(s) nouveau(x) ou vu(s)` : undefined}>
+      Demandes clients{n > 0 && <span class="nav-count" aria-label={`${n} en attente`}>{n}</span>}
+    </a>
+  );
 }

@@ -105,8 +105,9 @@ clients.get('/:clientId/infrastructure', async (c) => {
     all<{ phase: string; state: string; started_at: string | null; blocker: string | null }>(db, 'SELECT phase, state, started_at, blocker FROM phases WHERE client_id = ?1', client.id),
     all<DeliverableRow>(db, 'SELECT * FROM deliverables WHERE client_id = ?1 ORDER BY created_at', client.id),
     all<TaskRow>(db, 'SELECT * FROM tasks WHERE client_id = ?1 ORDER BY (status = \'fait\'), due_date IS NULL, due_date, created_at', client.id),
-    all<{ deliverable_id: string; n: number; from_client: number }>(db,
-      `SELECT deliverable_id, COUNT(*) AS n, SUM(author_role = 'client') AS from_client FROM deliverable_comments WHERE client_id = ?1 GROUP BY deliverable_id`, client.id),
+    all<{ deliverable_id: string; n: number; from_client: number; pending: number }>(db,
+      `SELECT deliverable_id, COUNT(*) AS n, SUM(author_role = 'client') AS from_client, SUM(author_role = 'client' AND handled_at IS NULL) AS pending
+       FROM deliverable_comments WHERE client_id = ?1 GROUP BY deliverable_id`, client.id),
   ]);
   const comments = new Map(commentCounts.map((r) => [r.deliverable_id, r]));
   const byKey = new Map(phaseRows.map((r) => [r.phase, r]));
@@ -119,7 +120,8 @@ clients.get('/:clientId/infrastructure', async (c) => {
     deliverables: deliverables.map((d) => {
       const out = serializeDeliverable(d, view);
       const n = comments.get(d.id);
-      return out.published || view === 'agence' ? { ...out, comments: n?.n ?? 0, clientComments: n?.from_client ?? 0 } : out;
+      if (!(out.published || view === 'agence')) return out;
+      return { ...out, comments: n?.n ?? 0, clientComments: n?.from_client ?? 0, ...(view === 'agence' ? { pendingClientComments: n?.pending ?? 0 } : {}) };
     }),
     tasks: {
       agence: tasks.filter((t) => t.owner === 'agence').map((t) => serializeTask(t, today)),
@@ -398,14 +400,15 @@ async function commentableDeliverable(c: { env: { DB: D1Database }; req: { param
 
 clients.get('/:clientId/deliverables/:deliverableId/comments', async (c) => {
   const d = await commentableDeliverable(c);
-  const rows = await all<{ id: string; body: string; created_at: string; author_role: string; author_user_id: string | null; display_name: string | null; email: string | null }>(c.env.DB,
-    `SELECT k.id, k.body, k.created_at, k.author_role, k.author_user_id, u.display_name, u.email FROM deliverable_comments k
+  const rows = await all<{ id: string; body: string; created_at: string; author_role: string; author_user_id: string | null; display_name: string | null; email: string | null; handled_at: string | null }>(c.env.DB,
+    `SELECT k.id, k.body, k.created_at, k.author_role, k.author_user_id, k.handled_at, u.display_name, u.email FROM deliverable_comments k
      LEFT JOIN users u ON u.id = k.author_user_id WHERE k.deliverable_id = ?1 AND k.client_id = ?2 ORDER BY k.created_at`, d.id, (c.get('client') as { id: string }).id);
   const me = c.get('user');
   return c.json({ comments: rows.map((r) => ({
     id: r.id, body: r.body, createdAt: r.created_at, authorRole: r.author_role,
     author: r.author_role === 'agence' ? 'Obsidian Partners' : r.display_name || r.email?.split('@')[0] || 'Client',
     mine: r.author_user_id === me.id,
+    ...(c.get('view') === 'agence' && r.author_role === 'client' ? { pending: !r.handled_at } : {}),
   })) });
 });
 
@@ -421,6 +424,10 @@ clients.post('/:clientId/deliverables/:deliverableId/comments', async (c) => {
   const id = newId('cmt');
   await run(c.env.DB, 'INSERT INTO deliverable_comments (id, client_id, deliverable_id, author_user_id, author_role, body) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
     id, client.id, d.id, user.id, user.role === 'agence' ? 'agence' : 'client', text);
+  // Une réponse de l'agence traite les demandes du client sur ce livrable (décision 0022).
+  if (user.role === 'agence') {
+    await run(c.env.DB, `UPDATE deliverable_comments SET handled_at = ?1 WHERE deliverable_id = ?2 AND author_role = 'client' AND handled_at IS NULL`, nowIso(), d.id);
+  }
   await audit(c.env.DB, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'livrable_commentaire', objectType: 'deliverable', objectId: d.id });
   return c.json({ ok: true, id }, 201);
 });

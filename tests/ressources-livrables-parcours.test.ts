@@ -90,3 +90,31 @@ describe('Parcours nouveau client', () => {
     expect(p2.items.find((i: any) => i.key === 'ressources').optional).toBe(true);
   });
 });
+
+describe('Demandes clients', () => {
+  it('un commentaire client reste à traiter jusqu’à la réponse de l’agence ou son marquage', async () => {
+    const { call } = setup();
+    const { id } = (await (await call(`/clients/${A}/deliverables`, { as: AGENCE, method: 'POST', body: { type: 'offre', title: 'Offre', externalUrl: 'https://drive.google.com/a', visible: true } })).json()) as any;
+    const count = async () => ((await (await call('/agence/demandes/compteur', { as: AGENCE })).json()) as any).comments;
+    const base = await count();
+    await call(`/clients/${A}/deliverables/${id}/comments`, { as: CLIENT_A, method: 'POST', body: { body: 'Urgent : la promesse est fausse.' } });
+    expect(await count()).toBe(base + 1);
+    expect((await call('/agence/demandes', { as: CLIENT_A })).status).toBe(403);
+    const list = (await (await call('/agence/demandes', { as: AGENCE })).json()) as any;
+    expect(list.comments.find((r: any) => r.deliverableId === id)).toMatchObject({ pending: 1, lastBody: 'Urgent : la promesse est fausse.' });
+    const agencyCard = ((await (await call(`/clients/${A}/infrastructure`, { as: AGENCE })).json()) as any).deliverables.find((d: any) => d.id === id);
+    expect(agencyCard.pendingClientComments).toBe(1);
+    const clientCard = ((await (await call(`/clients/${A}/infrastructure`, { as: CLIENT_A })).json()) as any).deliverables.find((d: any) => d.id === id);
+    expect(clientCard.pendingClientComments).toBeUndefined();
+    // La réponse de l'agence traite la demande.
+    await call(`/clients/${A}/deliverables/${id}/comments`, { as: AGENCE, method: 'POST', body: { body: 'Corrigé.' } });
+    expect(await count()).toBe(base);
+    // Nouveau commentaire, traité sans réponse.
+    await call(`/clients/${A}/deliverables/${id}/comments`, { as: CLIENT_A, method: 'POST', body: { body: 'Merci !' } });
+    expect(await count()).toBe(base + 1);
+    expect((await call(`/agence/demandes/livrables/${id}/traiter`, { as: AGENCE, method: 'POST' })).status).toBe(200);
+    expect(await count()).toBe(base);
+    const after = (await (await call('/agence/demandes', { as: AGENCE })).json()) as any;
+    expect(after.handled.find((h: any) => h.deliverableId === id)).toMatchObject({ count: 2 });
+  });
+});
