@@ -102,13 +102,14 @@ clients.get('/:clientId/infrastructure', async (c) => {
   const client = c.get('client');
   const view = c.get('view');
   const db = c.env.DB;
-  const [phaseRows, deliverables, tasks, commentCounts] = await Promise.all([
+  const [phaseRows, deliverables, tasks, commentCounts, verticals] = await Promise.all([
     all<{ phase: string; state: string; started_at: string | null; blocker: string | null }>(db, 'SELECT phase, state, started_at, blocker FROM phases WHERE client_id = ?1', client.id),
     all<DeliverableRow>(db, 'SELECT * FROM deliverables WHERE client_id = ?1 ORDER BY created_at', client.id),
     all<TaskRow>(db, 'SELECT * FROM tasks WHERE client_id = ?1 ORDER BY (status = \'fait\'), due_date IS NULL, due_date, created_at', client.id),
     all<{ deliverable_id: string; n: number; from_client: number; pending: number }>(db,
       `SELECT deliverable_id, COUNT(*) AS n, SUM(author_role = 'client') AS from_client, SUM(author_role = 'client' AND handled_at IS NULL) AS pending
        FROM deliverable_comments WHERE client_id = ?1 GROUP BY deliverable_id`, client.id),
+    all<{ id: string; name: string }>(db, `SELECT id, name FROM verticals WHERE client_id = ?1 AND status = 'active' ORDER BY created_at`, client.id),
   ]);
   const comments = new Map(commentCounts.map((r) => [r.deliverable_id, r]));
   const byKey = new Map(phaseRows.map((r) => [r.phase, r]));
@@ -118,11 +119,13 @@ clients.get('/:clientId/infrastructure', async (c) => {
       const r = byKey.get(p.key);
       return { key: p.key, label: p.label, state: r?.state ?? 'a_venir', startedAt: r?.started_at ?? null, blocker: r?.blocker ?? null };
     }),
+    verticals,
     deliverables: deliverables.map((d) => {
       const out = serializeDeliverable(d, view);
       const n = comments.get(d.id);
-      if (!(out.published || view === 'agence')) return out;
-      return { ...out, comments: n?.n ?? 0, clientComments: n?.from_client ?? 0, ...(view === 'agence' ? { pendingClientComments: n?.pending ?? 0 } : {}) };
+      const withV = { ...out, verticalId: (d as DeliverableRow & { vertical_id?: string | null }).vertical_id ?? null };
+      if (!(out.published || view === 'agence')) return withV;
+      return { ...withV, comments: n?.n ?? 0, clientComments: n?.from_client ?? 0, ...(view === 'agence' ? { pendingClientComments: n?.pending ?? 0 } : {}) };
     }),
     tasks: {
       agence: tasks.filter((t) => t.owner === 'agence').map((t) => serializeTask(t, today)),
@@ -267,7 +270,7 @@ clients.get('/:clientId/deliverables/:deliverableId', async (c) => {
 /** Étape de delivery dont vient le livrable (livrables rédigés dans l'espace uniquement). */
 function deliveryStepOf(d: DeliverableRow): string | null {
   if (d.origin !== 'genere' || !d.generation_json) return null;
-  try { const k = JSON.parse(d.generation_json).delivery_step; return typeof k === 'string' && DELIVERY_STEP_BY_KEY.has(k) ? k : null; } catch { return null; }
+  try { const k = JSON.parse(d.generation_json).delivery_step; return typeof k === 'string' && DELIVERY_STEP_BY_KEY.has(k.split('@')[0]) ? k : null; } catch { return null; }
 }
 
 async function reworkState(db: D1Database, clientId: string, d: DeliverableRow) {
@@ -277,7 +280,7 @@ async function reworkState(db: D1Database, clientId: string, d: DeliverableRow) 
     'SELECT status, queued_at, instruction, content_version, generated_at, last_error, content_md FROM delivery_steps WHERE client_id = ?1 AND step = ?2', clientId, key);
   if (!row?.content_md) return { available: false, reason: "L'étape de delivery de ce livrable n'a pas de texte à reprendre." };
   return {
-    available: true, step: key, label: DELIVERY_STEP_BY_KEY.get(key)!.label,
+    available: true, step: key, label: DELIVERY_STEP_BY_KEY.get(key.split('@')[0])!.label,
     queued: Boolean(row.queued_at), instruction: row.queued_at ? row.instruction : null,
     // Une version proposée par Claude attend la validation de l'agence quand l'étape est « à valider » et diffère du publié.
     proposed: row.status === 'a_valider' && row.content_md !== d.content_md,

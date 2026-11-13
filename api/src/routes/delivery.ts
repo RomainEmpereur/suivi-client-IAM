@@ -40,12 +40,25 @@ interface StepRow {
 const MAX_CONTENT = 200_000;
 const MAX_INSTRUCTION = 2_000;
 
-async function loadState(db: D1Database, clientId: string) {
+/** Verticale (décision 0024) : clé d'étape stockée « s1c@<id> » ; '' = verticale principale. */
+export interface VerticalRow {
+  id: string; client_id: string; name: string; avatar: string; market: string | null; competitors: string | null;
+  promise_changes: string | null; notes: string | null; mechanism: string | null; status: string; created_at: string;
+}
+const SEP = '@';
+/** « s1c@vt_x » → { key: 's1c', vid: 'vt_x' } ; « s1c » → { key: 's1c', vid: '' }. */
+export function splitStepKey(raw: string) { const i = raw.indexOf(SEP); return i < 0 ? { key: raw, vid: '' } : { key: raw.slice(0, i), vid: raw.slice(i + 1) }; }
+
+async function loadState(db: D1Database, clientId: string, vid = '') {
   const client = await first<ClientRow>(db, 'SELECT * FROM clients WHERE id = ?1', clientId);
   if (!client) throw notFound();
+  const vertical = vid ? await first<VerticalRow>(db, 'SELECT * FROM verticals WHERE id = ?1 AND client_id = ?2', vid, clientId) : null;
+  if (vid && !vertical) throw notFound();
+  const sk = (k: string) => (vid ? `${k}${SEP}${vid}` : k);
   const [answerRows, stepRows, connections, assets] = await Promise.all([
     all<{ question_key: string; answer: string | null }>(db, 'SELECT question_key, answer FROM onboarding_answers WHERE client_id = ?1', clientId),
-    all<StepRow>(db, 'SELECT * FROM delivery_steps WHERE client_id = ?1', clientId),
+    all<StepRow>(db, vid ? `SELECT * FROM delivery_steps WHERE client_id = ?1 AND step LIKE ?2`
+      : `SELECT * FROM delivery_steps WHERE client_id = ?1 AND instr(step, '${SEP}') = 0`, ...(vid ? [clientId, `%${SEP}${vid}`] : [clientId])),
     all<{ type: string; state: string; external_id: string | null; last_checked_at: string | null; error_message: string | null }>(db,
       'SELECT type, state, external_id, last_checked_at, error_message FROM connections WHERE client_id = ?1', clientId),
     all<{ type: string; file_name: string | null; external_url: string | null; description: string | null }>(db,
@@ -53,8 +66,13 @@ async function loadState(db: D1Database, clientId: string) {
   ]);
   const answers = Object.fromEntries(answerRows.map((a) => [a.question_key, a.answer]));
   const gate = deliveryGate(client.onboarding_submitted_at ?? null, answers);
-  const byStep = new Map(stepRows.map((r) => [r.step, r]));
-  return { client, answers, gate, byStep, connections, assets, mechanism: client.delivery_mechanism ?? null };
+  const byStep = new Map(stepRows.map((r) => [splitStepKey(r.step).key, r]));
+  // Verticale : la chaîne principale sert de référence dans les briefs (faits du produit, jamais l'avatar).
+  const mainByStep = vid
+    ? new Map((await all<StepRow>(db, `SELECT * FROM delivery_steps WHERE client_id = ?1 AND instr(step, '${SEP}') = 0`, clientId)).map((r) => [r.step, r]))
+    : null;
+  return { client, answers, gate, byStep, connections, assets, vid, vertical, sk, mainByStep,
+    mechanism: (vertical ? vertical.mechanism : client.delivery_mechanism) ?? null };
 }
 type State = Awaited<ReturnType<typeof loadState>>;
 
@@ -64,7 +82,7 @@ function serializeStep(s: DeliveryStep, st: State) {
   const row = st.byStep.get(s.key);
   const a = stepAvailability(s.key, { gateOk: st.gate.ok });
   return {
-    key: s.key, label: s.label, recurring: Boolean(s.recurring), needsMechanism: s.needsMechanism,
+    key: s.key, apiKey: st.sk(s.key), label: s.label, recurring: Boolean(s.recurring), needsMechanism: s.needsMechanism,
     deliverable: s.deliverable ? s.deliverable.title : null,
     status: row?.status ?? 'a_faire', resultUrl: row?.result_url ?? null, notes: row?.notes ?? null,
     validatedAt: row?.validated_at ?? null, updatedAt: row?.updated_at ?? null,
@@ -78,14 +96,76 @@ function serializeStep(s: DeliveryStep, st: State) {
 }
 
 delivery.get('/:clientId/delivery', async (c) => {
-  const st = await loadState(c.env.DB, c.get('client').id);
+  const st = await loadState(c.env.DB, c.get('client').id, c.req.query('verticale') ?? '');
+  const verticals = await all<VerticalRow>(c.env.DB, `SELECT * FROM verticals WHERE client_id = ?1 AND status = 'active' ORDER BY created_at`, st.client.id);
   return c.json({
+    verticalsEnabled: Boolean(st.client.verticals_enabled),
+    verticals: verticals.map(serializeVertical),
+    vertical: st.vertical ? serializeVertical(st.vertical) : null,
     gate: st.gate,
     mechanism: st.mechanism,
     driveFolderUrl: st.client.drive_folder_url ?? null,
     generationConfigured: Boolean(c.env.DELIVERY_ROBOT_TOKEN),
     steps: DELIVERY_STEPS.map((s) => serializeStep(s, st)),
   });
+});
+
+// ─── Verticales (décision 0024) : agence uniquement, activées client par client ───────────────
+
+function readVertical(body: Record<string, unknown>, partial: boolean) {
+  const out: Record<string, string | null> = {};
+  const field = (k: string, col: string, max: number, required: boolean) => {
+    if (partial && !(k in body)) return;
+    const v = typeof body[k] === 'string' ? (body[k] as string).trim() : '';
+    if (required && !v) throw new HttpError(400, k === 'name' ? 'Nom de la verticale requis.' : "Décrivez l'avatar visé.");
+    if (v.length > max) throw new HttpError(400, `${k} : ${max} caractères au plus.`);
+    out[col] = v || null;
+  };
+  field('name', 'name', 120, true);
+  field('avatar', 'avatar', 2000, true);
+  field('market', 'market', 1000, false);
+  field('competitors', 'competitors', 1000, false);
+  field('promiseChanges', 'promise_changes', 2000, false);
+  field('notes', 'notes', 2000, false);
+  if ('status' in body) {
+    if (body.status !== 'active' && body.status !== 'archivee') throw new HttpError(400, 'Statut invalide.');
+    out.status = body.status as string;
+  }
+  return out;
+}
+
+delivery.post('/:clientId/delivery/verticales', async (c) => {
+  const db = c.env.DB;
+  const client = c.get('client');
+  const user = c.get('user');
+  const row = await first<ClientRow>(db, 'SELECT * FROM clients WHERE id = ?1', client.id);
+  if (!row?.verticals_enabled) throw new HttpError(409, 'Les verticales ne sont pas activées pour ce client (fiche client).');
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Corps de requête invalide.');
+  const f = readVertical(body, false);
+  const id = newId('vt');
+  await db.prepare('INSERT INTO verticals (id, client_id, name, avatar, market, competitors, promise_changes, notes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)')
+    .bind(id, client.id, f.name, f.avatar, f.market ?? null, f.competitors ?? null, f.promise_changes ?? null, f.notes ?? null).run();
+  await audit(db, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'verticale_creation', objectType: 'vertical', objectId: id, after: f });
+  return c.json({ ok: true, id }, 201);
+});
+
+delivery.patch('/:clientId/delivery/verticales/:verticalId', async (c) => {
+  const db = c.env.DB;
+  const client = c.get('client');
+  const user = c.get('user');
+  const v = await first<VerticalRow>(db, 'SELECT * FROM verticals WHERE id = ?1 AND client_id = ?2', c.req.param('verticalId'), client.id);
+  if (!v) throw notFound();
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Corps de requête invalide.');
+  const f = readVertical(body, true);
+  const cols = Object.keys(f);
+  if (cols.length) {
+    await db.prepare(`UPDATE verticals SET ${cols.map((k, i) => `${k} = ?${i + 1}`).join(', ')}, updated_at = ?${cols.length + 1} WHERE id = ?${cols.length + 2}`)
+      .bind(...cols.map((k) => f[k]), nowIso(), v.id).run();
+  }
+  await audit(db, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'verticale_modification', objectType: 'vertical', objectId: v.id, after: f });
+  return c.json({ ok: true });
 });
 
 /** Codes d'intégration de la landing (décision 0017). */
@@ -98,17 +178,23 @@ const RESOURCE_LABEL: Record<string, string> = {
   enregistrement: 'Enregistrement', acces_site: 'Accès au site', autre: 'Autre',
 };
 
-function stepOr404(key: string) {
-  const s = DELIVERY_STEP_BY_KEY.get(key);
+function stepOr404(raw: string) {
+  const s = DELIVERY_STEP_BY_KEY.get(splitStepKey(raw).key);
   if (!s) throw notFound();
   return s;
 }
+const vidOf = (raw: string) => splitStepKey(raw).vid;
+
+export const serializeVertical = (v: VerticalRow) => ({
+  id: v.id, name: v.name, avatar: v.avatar, market: v.market, competitors: v.competitors, promiseChanges: v.promise_changes,
+  notes: v.notes, mechanism: v.mechanism, status: v.status, createdAt: v.created_at,
+});
 
 /** Brief d'une étape (copie manuelle possible dans le projet Claude). */
 delivery.get('/:clientId/delivery/:step/brief', async (c) => {
   const step = stepOr404(c.req.param('step'));
   const db = c.env.DB;
-  const st = await loadState(db, c.get('client').id);
+  const st = await loadState(db, c.get('client').id, vidOf(c.req.param('step')));
   if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies (onboarding et infos de base).');
   const weekly = step.key === 's8' ? await weeklyBlock(db, st.client) : null;
   return c.json({ text: buildBrief(step, st, weekly) });
@@ -118,11 +204,25 @@ function buildBrief(step: DeliveryStep, st: State, weekly: string | null): strin
   const { client } = st;
   const row = st.byStep.get(step.key);
   const out: string[] = [];
-  out.push(`# ${client.name} — Étape ${step.label}`);
+  const v = st.vertical;
+  out.push(`# ${client.name}${v ? ` — Verticale « ${v.name} »` : ''} — Étape ${step.label}`);
   out.push('');
   out.push(`Applique le master prompt de delivery au client ${client.name}, pour l'étape ${step.label} uniquement. ` +
     'Consomme les pièces des étapes précédentes reproduites ci-dessous : ne les réinvente pas.');
   out.push('');
+  if (v) {
+    out.push(`## Verticale : ${v.name}`);
+    out.push("Cette chaîne vise un AUTRE avatar que la verticale principale du client. Le produit, l'histoire du fondateur, les chiffres " +
+      "unitaires, la garantie et les ressources restent ceux de l'onboarding ; l'avatar, sa douleur, son villain, la promesse, le mécanisme " +
+      "nommé, les preuves et les mots viennent de cette verticale. Les pièces de la verticale principale, en fin de brief, sont une " +
+      "référence pour les faits du produit : n'en reprends jamais l'avatar ni les accroches.");
+    out.push(`- **Avatar visé** : ${v.avatar}`);
+    if (v.market) out.push(`- **Marché** : ${v.market}`);
+    if (v.competitors) out.push(`- **Concurrents de cette verticale** : ${v.competitors}`);
+    if (v.promise_changes) out.push(`- **Ce qui change dans la promesse** : ${v.promise_changes}`);
+    if (v.notes) out.push(`- **Notes de l'agence** : ${v.notes}`);
+    out.push('');
+  }
   if (row?.instruction) {
     out.push("## Consigne de reprise de l'agence (prioritaire)");
     out.push(row.instruction);
@@ -197,6 +297,14 @@ function buildBrief(step: DeliveryStep, st: State, weekly: string | null): strin
       ? `Garde le mécanisme retenu « ${st.mechanism} ».`
       : 'Propose les trois noms de mécanisme demandés et indique celui que tu recommandes : il sera retenu pour toute la suite (l\'agence pourra le changer).');
   }
+  if (st.mainByStep) {
+    const ref = (['s0', 's1c'] as const).map((k) => [k, st.mainByStep!.get(k)] as const).filter(([, r]) => r?.content_md);
+    if (ref.length) {
+      out.push('');
+      out.push('## Référence : verticale principale (faits du produit uniquement, ne pas reprendre l\'avatar)');
+      for (const [k, r] of ref) { out.push(`### ${DELIVERY_STEP_BY_KEY.get(k)!.label}`); out.push(r!.content_md!.trim()); out.push(''); }
+    }
+  }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
 
@@ -251,8 +359,8 @@ const ensureRow = (db: D1Database, clientId: string, step: string) =>
   db.prepare('INSERT OR IGNORE INTO delivery_steps (id, client_id, step) VALUES (?1, ?2, ?3)').bind(newId('dls'), clientId, step);
 
 /** Une pièce amont a changé : les pièces aval déjà rédigées passent « à revoir ». */
-function markDownstreamStale(db: D1Database, clientId: string, step: DeliveryStep) {
-  const later = DELIVERY_STEPS.slice(DELIVERY_STEPS.indexOf(step) + 1).filter((s) => !s.recurring).map((s) => s.key);
+function markDownstreamStale(db: D1Database, clientId: string, step: DeliveryStep, sk: (k: string) => string) {
+  const later = DELIVERY_STEPS.slice(DELIVERY_STEPS.indexOf(step) + 1).filter((s) => !s.recurring).map((s) => sk(s.key));
   if (later.length === 0) return null;
   return db.prepare(
     `UPDATE delivery_steps SET stale = 1 WHERE client_id = ?1 AND content_md IS NOT NULL AND step IN (${later.map((_, i) => `?${i + 2}`).join(',')})`,
@@ -263,9 +371,9 @@ function saveContent(db: D1Database, st: State, step: DeliveryStep, content: str
   const row = st.byStep.get(step.key);
   const version = (row?.content_version ?? 0) + 1;
   const stmts: D1PreparedStatement[] = [
-    ensureRow(db, st.client.id, step.key),
+    ensureRow(db, st.client.id, st.sk(step.key)),
     db.prepare('INSERT INTO delivery_versions (id, client_id, step, version, content_md, source, instruction) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
-      .bind(newId('dlv'), st.client.id, step.key, version, content, source, source === 'claude' ? row?.instruction ?? null : null),
+      .bind(newId('dlv'), st.client.id, st.sk(step.key), version, content, source, source === 'claude' ? row?.instruction ?? null : null),
   ];
   const s8 = Boolean(step.recurring);
   stmts.push(db.prepare(
@@ -277,8 +385,8 @@ function saveContent(db: D1Database, st: State, step: DeliveryStep, content: str
        instruction = CASE WHEN ?3 = 'claude' THEN NULL ELSE instruction END,
        last_error = CASE WHEN ?3 = 'claude' THEN NULL ELSE last_error END
      WHERE client_id = ?6 AND step = ?7`,
-  ).bind(content, version, source, s8 ? 'en_cours' : 'a_valider', now, st.client.id, step.key));
-  const stale = markDownstreamStale(db, st.client.id, step);
+  ).bind(content, version, source, s8 ? 'en_cours' : 'a_valider', now, st.client.id, st.sk(step.key)));
+  const stale = markDownstreamStale(db, st.client.id, step, st.sk);
   if (stale && content !== row?.content_md) stmts.push(stale);
   return stmts;
 }
@@ -297,17 +405,17 @@ const isHttps = (v: string) => { try { return new URL(v).protocol === 'https:'; 
 delivery.post('/:clientId/delivery/launch', async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
-  const st = await loadState(db, c.get('client').id);
+  const st = await loadState(db, c.get('client').id, c.req.query('verticale') ?? '');
   if (!st.gate.ok) throw new HttpError(409, `Delivery pas encore lançable. Manque : ${st.gate.missing.join(' · ')}.`);
   const now = nowIso();
   const todo = CHAIN_STEPS.filter((k) => !hasContent(st.byStep.get(k)) && !st.byStep.get(k)?.queued_at);
   if (todo.length) {
     await db.batch(todo.flatMap((k) => [
-      ensureRow(db, st.client.id, k),
-      db.prepare(`UPDATE delivery_steps SET queued_at = ?1, status = 'en_cours', last_error = NULL, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, k),
+      ensureRow(db, st.client.id, st.sk(k)),
+      db.prepare(`UPDATE delivery_steps SET queued_at = ?1, status = 'en_cours', last_error = NULL, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, st.sk(k)),
     ]));
   }
-  await audit(db, { clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_lance', objectType: 'client', objectId: st.client.id, after: { steps: todo } });
+  await audit(db, { clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_lance', objectType: 'client', objectId: st.client.id, after: { steps: todo, vertical: st.vid || null } });
   return c.json({ queued: todo.length });
 });
 
@@ -315,11 +423,12 @@ delivery.post('/:clientId/delivery/launch', async (c) => {
 delivery.post('/:clientId/delivery/regenerate-stale', async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
-  const st = await loadState(db, c.get('client').id);
+  const st = await loadState(db, c.get('client').id, c.req.query('verticale') ?? '');
   if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies.');
   const now = nowIso();
-  const res = await db.prepare(`UPDATE delivery_steps SET queued_at = ?1, last_error = NULL, updated_at = ?1 WHERE client_id = ?2 AND stale = 1 AND queued_at IS NULL`)
-    .bind(now, st.client.id).run();
+  const scope = st.vid ? `step LIKE ?3` : `instr(step, '${SEP}') = 0`;
+  const res = await db.prepare(`UPDATE delivery_steps SET queued_at = ?1, last_error = NULL, updated_at = ?1 WHERE client_id = ?2 AND stale = 1 AND queued_at IS NULL AND ${scope}`)
+    .bind(now, st.client.id, ...(st.vid ? [`%${SEP}${st.vid}`] : [])).run();
   await audit(db, { clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_reprise_aval', objectType: 'client', objectId: st.client.id });
   return c.json({ queued: res.meta.changes ?? 0 });
 });
@@ -330,11 +439,12 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || typeof body !== 'object') throw new HttpError(400, 'Corps de requête invalide.');
-  const st = await loadState(db, c.get('client').id);
+  const st = await loadState(db, c.get('client').id, vidOf(c.req.param('step')));
   if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies (onboarding et infos de base).');
   const row = st.byStep.get(step.key);
   const now = nowIso();
-  const stmts: D1PreparedStatement[] = [ensureRow(db, st.client.id, step.key)];
+  const SK = st.sk(step.key);
+  const stmts: D1PreparedStatement[] = [ensureRow(db, st.client.id, SK)];
   const changes: Record<string, unknown> = {};
 
   if ('contentMd' in body) {
@@ -350,14 +460,14 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
     if (v === null || v === '') url = null;
     else if (typeof v === 'string' && isHttps(v.trim())) url = v.trim();
     else throw new HttpError(400, 'Le lien doit être une adresse https.');
-    stmts.push(db.prepare('UPDATE delivery_steps SET result_url = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4').bind(url, now, st.client.id, step.key));
+    stmts.push(db.prepare('UPDATE delivery_steps SET result_url = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4').bind(url, now, st.client.id, SK));
     changes.resultUrl = url;
   }
   if ('notes' in body) {
     if (body.notes !== null && typeof body.notes !== 'string') throw new HttpError(400, 'Notes invalides.');
     const notes = (body.notes as string | null)?.trim() || null;
     if (notes && notes.length > 4000) throw new HttpError(400, 'Notes trop longues (4 000 caractères au plus).');
-    stmts.push(db.prepare('UPDATE delivery_steps SET notes = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4').bind(notes, now, st.client.id, step.key));
+    stmts.push(db.prepare('UPDATE delivery_steps SET notes = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4').bind(notes, now, st.client.id, SK));
   }
   let mechanism = st.mechanism;
   if ('mechanism' in body) {
@@ -366,9 +476,11 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
     if (v !== null && (typeof v !== 'string' || v.trim().length > 120)) throw new HttpError(400, 'Nom de mécanisme invalide.');
     const next = (v as string | null)?.trim() || null;
     if (next !== mechanism) {
-      stmts.push(db.prepare('UPDATE clients SET delivery_mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(next, now, st.client.id));
+      stmts.push(st.vertical
+        ? db.prepare('UPDATE verticals SET mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(next, now, st.vertical.id)
+        : db.prepare('UPDATE clients SET delivery_mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(next, now, st.client.id));
       // Les pièces qui citent le mécanisme passent « à revoir ».
-      const keys = DELIVERY_STEPS.filter((s) => s.needsMechanism && !s.recurring).map((s) => s.key);
+      const keys = DELIVERY_STEPS.filter((s) => s.needsMechanism && !s.recurring).map((s) => st.sk(s.key));
       stmts.push(db.prepare(`UPDATE delivery_steps SET stale = 1 WHERE client_id = ?1 AND content_md IS NOT NULL AND step IN (${keys.map((_, i) => `?${i + 2}`).join(',')})`).bind(st.client.id, ...keys));
       changes.mechanism = next;
       mechanism = next;
@@ -388,11 +500,11 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
       next[k] = code.trim();
     }
     stmts.push(db.prepare('UPDATE delivery_steps SET integrations_json = ?1, updated_at = ?2 WHERE client_id = ?3 AND step = ?4')
-      .bind(JSON.stringify(next), now, st.client.id, step.key));
+      .bind(JSON.stringify(next), now, st.client.id, SK));
     changes.integrations = { vsl: Boolean(next.vsl), calendrier: Boolean(next.calendrier) };
   }
   if (body.stale === false) {
-    stmts.push(db.prepare('UPDATE delivery_steps SET stale = 0, updated_at = ?1 WHERE client_id = ?2 AND step = ?3').bind(now, st.client.id, step.key));
+    stmts.push(db.prepare('UPDATE delivery_steps SET stale = 0, updated_at = ?1 WHERE client_id = ?2 AND step = ?3').bind(now, st.client.id, SK));
     changes.stale = false;
   }
   if (body.regenerate === true) {
@@ -401,7 +513,7 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
     if (earlierMissing) throw new HttpError(409, "Lancez d'abord le delivery : une étape précédente n'est ni rédigée ni en file.");
     stmts.push(db.prepare(`UPDATE delivery_steps SET queued_at = ?1, instruction = ?2, last_error = NULL,
         status = CASE WHEN content_md IS NULL THEN 'en_cours' ELSE status END, updated_at = ?1 WHERE client_id = ?3 AND step = ?4`)
-      .bind(now, instruction, st.client.id, step.key));
+      .bind(now, instruction, st.client.id, SK));
     changes.regenerate = { instruction };
   }
 
@@ -416,36 +528,37 @@ delivery.patch('/:clientId/delivery/:step', async (c) => {
       const blocker = validationBlocker(step, { hasContent: Boolean(content?.trim() || url), mechanism, stale, connections: st.connections });
       if (blocker) throw new HttpError(409, blocker);
       if (row?.queued_at && body.regenerate !== true) throw new HttpError(409, 'Claude est en train de reprendre cette pièce : attendez la nouvelle version.');
-      stmts.push(db.prepare(`UPDATE delivery_steps SET status = 'valide', validated_at = ?1, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, step.key));
-      if (step.deliverable) stmts.push(...await publishDeliverable(db, st.client.id, step, content, url, mechanism, now));
+      stmts.push(db.prepare(`UPDATE delivery_steps SET status = 'valide', validated_at = ?1, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, SK));
+      if (step.deliverable) stmts.push(...await publishDeliverable(db, st.client.id, step, content, url, mechanism, now, st.vertical));
     } else {
-      stmts.push(db.prepare(`UPDATE delivery_steps SET status = 'a_valider', validated_at = NULL, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, step.key));
+      stmts.push(db.prepare(`UPDATE delivery_steps SET status = 'a_valider', validated_at = NULL, updated_at = ?1 WHERE client_id = ?2 AND step = ?3`).bind(now, st.client.id, SK));
     }
     changes.status = status;
   }
 
   await db.batch(stmts);
   await audit(db, {
-    clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_etape_modifiee', objectType: 'delivery_step', objectId: `${st.client.id}:${step.key}`,
+    clientId: st.client.id, actorId: user.id, actorEmail: user.email, action: 'delivery_etape_modifiee', objectType: 'delivery_step', objectId: `${st.client.id}:${SK}`,
     before: row ? { status: row.status, contentVersion: row.content_version, mechanism: st.mechanism } : null,
     after: { step: step.key, ...changes },
   });
-  const fresh = await loadState(db, st.client.id);
+  const fresh = await loadState(db, st.client.id, st.vid);
   return c.json({ step: serializeStep(step, fresh), mechanism: fresh.mechanism });
 });
 
 /** Pièce client validée → livrable publié dans l'espace du client (créé, ou mis à jour avec une nouvelle version). */
-async function publishDeliverable(db: D1Database, clientId: string, step: DeliveryStep, content: string | null, url: string | null, mechanism: string | null, now: string) {
+async function publishDeliverable(db: D1Database, clientId: string, step: DeliveryStep, content: string | null, url: string | null, mechanism: string | null, now: string, vertical: VerticalRow | null = null) {
   const d = step.deliverable!;
+  const key = vertical ? `${step.key}${SEP}${vertical.id}` : step.key;
   const existing = await first<{ id: string; content_md: string | null; external_url: string | null; version: number; visible_client: number }>(db,
     `SELECT id, content_md, external_url, version, visible_client FROM deliverables WHERE client_id = ?1 AND origin = 'genere' AND json_extract(generation_json, '$.delivery_step') = ?2`,
-    clientId, step.key);
-  const gen = JSON.stringify({ delivery_step: step.key, source: 'master-prompt', mechanism });
+    clientId, key);
+  const gen = JSON.stringify({ delivery_step: key, source: 'master-prompt', mechanism });
   if (!existing) {
     return [db.prepare(
-      `INSERT INTO deliverables (id, client_id, type, phase, title, status, version, external_url, content_md, visible_client, published_at, origin, generation_json)
-       VALUES (?1, ?2, ?3, ?4, ?5, 'valide', 1, ?6, ?7, 1, ?8, 'genere', ?9)`,
-    ).bind(newId('dl'), clientId, d.type, d.phase, d.title, url, content, now, gen)];
+      `INSERT INTO deliverables (id, client_id, type, phase, title, status, version, external_url, content_md, visible_client, published_at, origin, generation_json, vertical_id)
+       VALUES (?1, ?2, ?3, ?4, ?5, 'valide', 1, ?6, ?7, 1, ?8, 'genere', ?9, ?10)`,
+    ).bind(newId('dl'), clientId, d.type, d.phase, vertical ? `${vertical.name} — ${d.title}` : d.title, url, content, now, gen, vertical?.id ?? null)];
   }
   const changed = existing.content_md !== content || existing.external_url !== url;
   return [db.prepare(
@@ -480,7 +593,7 @@ robot.use('*', async (c, next) => {
 const ROBOT_ACTOR = { actorId: 'robot-delivery', actorEmail: 'generation-automatique' };
 
 async function robotClient(c: Context<{ Bindings: Bindings }>) {
-  const st = await loadState(c.env.DB, c.req.param('clientId')!);
+  const st = await loadState(c.env.DB, c.req.param('clientId')!, vidOf(c.req.param('step') ?? ''));
   if (c.env.ENVIRONMENT === 'production' && st.client.is_demo) throw notFound();
   if (!st.gate.ok) throw new HttpError(409, 'Conditions de lancement non remplies.');
   return st;
@@ -489,14 +602,16 @@ async function robotClient(c: Context<{ Bindings: Bindings }>) {
 /** File : étapes demandées, dans l'ordre de la chaîne pour chaque client. */
 robot.get('/delivery/queue', async (c) => {
   const demo = c.env.ENVIRONMENT === 'production' ? 'AND cl.is_demo = 0' : '';
-  const rows = await all<{ client_id: string; name: string; step: string; queued_at: string; instruction: string | null }>(c.env.DB,
-    `SELECT ds.client_id, cl.name, ds.step, ds.queued_at, ds.instruction FROM delivery_steps ds JOIN clients cl ON cl.id = ds.client_id
+  const rows = await all<{ client_id: string; name: string; step: string; queued_at: string; instruction: string | null; vname: string | null }>(c.env.DB,
+    `SELECT ds.client_id, cl.name, ds.step, ds.queued_at, ds.instruction, v.name AS vname FROM delivery_steps ds JOIN clients cl ON cl.id = ds.client_id
+     LEFT JOIN verticals v ON v.client_id = ds.client_id AND instr(ds.step, '${SEP}') > 0 AND v.id = substr(ds.step, instr(ds.step, '${SEP}') + 1)
      WHERE ds.queued_at IS NOT NULL ${demo} ORDER BY ds.client_id`);
-  const order = (k: string) => DELIVERY_STEPS.findIndex((s) => s.key === k);
-  rows.sort((x, y) => x.client_id.localeCompare(y.client_id) || order(x.step) - order(y.step));
+  const order = (k: string) => DELIVERY_STEPS.findIndex((s) => s.key === splitStepKey(k).key);
+  rows.sort((x, y) => x.client_id.localeCompare(y.client_id) || splitStepKey(x.step).vid.localeCompare(splitStepKey(y.step).vid) || order(x.step) - order(y.step));
   return c.json({
     items: rows.map((r) => ({
-      clientId: r.client_id, clientName: r.name, step: r.step, label: DELIVERY_STEP_BY_KEY.get(r.step)?.label ?? r.step,
+      clientId: r.client_id, clientName: r.vname ? `${r.name} — verticale « ${r.vname} »` : r.name, step: r.step,
+      label: DELIVERY_STEP_BY_KEY.get(splitStepKey(r.step).key)?.label ?? r.step, vertical: r.vname,
       instruction: r.instruction, queuedAt: r.queued_at,
     })),
   });
@@ -523,11 +638,13 @@ robot.put('/clients/:clientId/delivery/:step', async (c) => {
   if (step.key === 's1c' && !st.mechanism) {
     const m = typeof body?.mechanism === 'string' ? body.mechanism.trim() : '';
     if (!m || m.length > 120) throw new HttpError(400, 'Indiquez le nom de mécanisme recommandé (champ « mechanism », 120 caractères au plus).');
-    stmts.push(db.prepare('UPDATE clients SET delivery_mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(m, now, st.client.id));
+    stmts.push(st.vertical
+      ? db.prepare('UPDATE verticals SET mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(m, now, st.vertical.id)
+      : db.prepare('UPDATE clients SET delivery_mechanism = ?1, updated_at = ?2 WHERE id = ?3').bind(m, now, st.client.id));
     mechanism = m;
   }
   await db.batch(stmts);
-  await audit(db, { clientId: st.client.id, ...ROBOT_ACTOR, action: 'delivery_piece_deposee', objectType: 'delivery_step', objectId: `${st.client.id}:${step.key}`,
+  await audit(db, { clientId: st.client.id, ...ROBOT_ACTOR, action: 'delivery_piece_deposee', objectType: 'delivery_step', objectId: `${st.client.id}:${st.sk(step.key)}`,
     after: { step: step.key, version: (st.byStep.get(step.key)?.content_version ?? 0) + 1, mechanism } });
   return c.json({ ok: true, mechanism });
 });
@@ -540,10 +657,10 @@ robot.post('/clients/:clientId/delivery/:step/error', async (c) => {
   const message = typeof body?.message === 'string' ? body.message.trim().slice(0, 1000) : 'Échec sans message.';
   const now = nowIso();
   await c.env.DB.batch([
-    ensureRow(c.env.DB, st.client.id, step.key),
+    ensureRow(c.env.DB, st.client.id, st.sk(step.key)),
     c.env.DB.prepare(`UPDATE delivery_steps SET queued_at = NULL, last_error = ?1,
         status = CASE WHEN content_md IS NULL THEN 'a_faire' ELSE status END, updated_at = ?2 WHERE client_id = ?3 AND step = ?4`)
-      .bind(message, now, st.client.id, step.key),
+      .bind(message, now, st.client.id, st.sk(step.key)),
   ]);
   await audit(c.env.DB, { clientId: st.client.id, ...ROBOT_ACTOR, action: 'delivery_echec', objectType: 'delivery_step', objectId: `${st.client.id}:${step.key}`, after: { message } });
   return c.json({ ok: true });

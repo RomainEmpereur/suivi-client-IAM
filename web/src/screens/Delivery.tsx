@@ -8,14 +8,16 @@ import { extractHtmlBlocks } from '../markdown.ts';
 import { INTEGRATIONS, applyIntegrations, ghlSnippet, integrationMarkers, type IntegrationKey } from '@obsidian/domain';
 
 interface Step {
-  key: string; label: string; recurring: boolean; needsMechanism: boolean; deliverable: string | null;
+  key: string; apiKey: string; label: string; recurring: boolean; needsMechanism: boolean; deliverable: string | null;
   status: 'a_faire' | 'en_cours' | 'a_valider' | 'valide'; resultUrl: string | null; notes: string | null; validatedAt: string | null;
   contentMd: string | null; contentVersion: number; contentSource: 'claude' | 'agence' | null; generatedAt: string | null;
   queued: boolean; queuedAt: string | null; instruction: string | null; stale: boolean; lastError: string | null;
   integrations: { vsl: string | null; calendrier: string | null } | null;
   available: boolean; lockedReason: string | null; validationBlocker: string | null;
 }
+interface Vertical { id: string; name: string; avatar: string; market: string | null; competitors: string | null; promiseChanges: string | null; notes: string | null; mechanism: string | null }
 interface DeliveryData {
+  verticalsEnabled: boolean; verticals: Vertical[]; vertical: Vertical | null;
   gate: { ok: boolean; missing: string[] }; mechanism: string | null; driveFolderUrl: string | null;
   generationConfigured: boolean; steps: Step[];
 }
@@ -47,7 +49,16 @@ function statusPill(s: Step) {
  * une pièce client validée est publiée aussitôt dans l'espace du client.
  */
 export function DeliveryScreen({ clientId }: { clientId: string }) {
-  const { data, error, loading, reload } = useApi<DeliveryData>(`/clients/${clientId}/delivery`);
+  // Verticale affichée (décision 0024) : '' = principale ; lue dans l'URL (?verticale=…) pour les liens directs.
+  const [vid, setVid] = useState(() => new URLSearchParams(location.search).get('verticale') ?? '');
+  const [creating, setCreating] = useState(false);
+  const [editingVertical, setEditingVertical] = useState(false);
+  const q = vid ? `?verticale=${encodeURIComponent(vid)}` : '';
+  const { data, error, loading, reload } = useApi<DeliveryData>(`/clients/${clientId}/delivery${q}`, [vid]);
+  function pick(next: string) {
+    setVid(next); setCreating(false); setEditingVertical(false);
+    history.replaceState(null, '', `/c/${clientId}/delivery${next ? `?verticale=${encodeURIComponent(next)}` : ''}`);
+  }
   // Lien direct vers une étape (#s1c), par exemple depuis « Reprise par Claude » sur un livrable.
   useEffect(() => { if (data && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [Boolean(data)]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -78,7 +89,26 @@ export function DeliveryScreen({ clientId }: { clientId: string }) {
       {error && <ErrorBox error={error} />}
       {loading && !data && <Loading />}
       {msg && <div class={`banner ${msg.kind === 'ok' ? 'accent' : 'alert'}`} role="status"><span>{msg.text}</span></div>}
-      {data && (
+      {data && data.verticalsEnabled && (
+        <div class="seg" role="tablist" aria-label="Verticales" style="margin-bottom:14px;flex-wrap:wrap">
+          <button type="button" role="tab" aria-pressed={!vid && !creating} onClick={() => pick('')}>Verticale principale</button>
+          {data.verticals.map((v) => <button type="button" role="tab" aria-pressed={vid === v.id && !creating} onClick={() => pick(v.id)}>{v.name}</button>)}
+          <button type="button" aria-pressed={creating} onClick={() => setCreating(true)}>+ Nouvelle verticale</button>
+        </div>
+      )}
+      {data && creating && <VerticalForm clientId={clientId} onDone={(id) => { setCreating(false); if (id) pick(id); else reload(); }} />}
+      {data && !creating && data.vertical && (
+        <div class="card section" style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+            <span class="label">Verticale</span><strong>{data.vertical.name}</strong>
+            <button class="ghost-btn small" style="margin-left:auto" onClick={() => setEditingVertical(!editingVertical)}>{editingVertical ? 'Fermer' : 'Modifier le brief'}</button>
+          </div>
+          {editingVertical
+            ? <VerticalForm clientId={clientId} vertical={data.vertical} onDone={() => { setEditingVertical(false); reload(); }} />
+            : <span class="small muted">Avatar : {data.vertical.avatar}{data.vertical.market ? ` · Marché : ${data.vertical.market}` : ''}</span>}
+        </div>
+      )}
+      {data && !creating && (
         <>
           {!data.gate.ok ? (
             <div class="banner warn" role="status">
@@ -97,8 +127,8 @@ export function DeliveryScreen({ clientId }: { clientId: string }) {
                 </span>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                {stale > 0 && <button class="ghost-btn" onClick={() => post(`/clients/${clientId}/delivery/regenerate-stale`, (r) => `${r.queued} pièce(s) remises en rédaction.`)}>Refaire les pièces à revoir</button>}
-                {toLaunch > 0 && <button class="btn" onClick={() => post(`/clients/${clientId}/delivery/launch`, (r) => `${r.queued} étape(s) en file de rédaction. Claude les rédige au prochain passage.`)}>Lancer le delivery</button>}
+                {stale > 0 && <button class="ghost-btn" onClick={() => post(`/clients/${clientId}/delivery/regenerate-stale${q}`, (r) => `${r.queued} pièce(s) remises en rédaction.`)}>Refaire les pièces à revoir</button>}
+                {toLaunch > 0 && <button class="btn" onClick={() => post(`/clients/${clientId}/delivery/launch${q}`, (r) => `${r.queued} étape(s) en file de rédaction. Claude les rédige au prochain passage.`)}>Lancer le delivery</button>}
               </div>
             </div>
           )}
@@ -106,7 +136,7 @@ export function DeliveryScreen({ clientId }: { clientId: string }) {
             <div class="banner warn" role="status"><span>La rédaction automatique n'est pas encore branchée sur cet environnement : les étapes en file attendront. Vous pouvez toujours copier le brief d'une étape et la rédiger dans le projet Claude.</span></div>
           )}
           <div style="display:flex;flex-direction:column;gap:12px">
-            {data.steps.map((s) => <StepCard key={s.key} clientId={clientId} step={s} mechanism={data.mechanism} onChange={reload} />)}
+            {data.steps.map((s) => <StepCard key={s.apiKey} clientId={clientId} step={s} mechanism={data.mechanism} onChange={reload} />)}
           </div>
           <AgencyNote>écran réservé à l'agence. Claude ne valide et ne publie jamais rien : seule votre validation publie une pièce client (1C, puis 2 à 7) dans l'espace du client. Les étapes 0, 1A et 1B restent internes.</AgencyNote>
         </>
@@ -130,7 +160,7 @@ function StepCard({ clientId, step, mechanism, onChange }: { clientId: string; s
   async function patch(body: Record<string, unknown>, ok: string) {
     setBusy(true); setMsg(null);
     try {
-      await api(`/clients/${clientId}/delivery/${step.key}`, { method: 'PATCH', body: JSON.stringify(body) });
+      await api(`/clients/${clientId}/delivery/${encodeURIComponent(step.apiKey)}`, { method: 'PATCH', body: JSON.stringify(body) });
       setMsg({ kind: 'ok', text: ok }); setEditing(false); setAskRedo(false); setInstruction('');
       onChange();
     } catch (e) { setMsg({ kind: 'err', text: (e as ApiError).message }); }
@@ -139,13 +169,13 @@ function StepCard({ clientId, step, mechanism, onChange }: { clientId: string; s
   async function copyBrief() {
     setMsg(null);
     try {
-      const r = await api<{ text: string }>(`/clients/${clientId}/delivery/${step.key}/brief`);
+      const r = await api<{ text: string }>(`/clients/${clientId}/delivery/${encodeURIComponent(step.apiKey)}/brief`);
       setMsg(await copy(r.text) ? { kind: 'ok', text: 'Brief copié (rédaction manuelle dans le projet Claude).' } : { kind: 'err', text: 'Copie impossible depuis ce navigateur.' });
     } catch (e) { setMsg({ kind: 'err', text: (e as ApiError).message }); }
   }
 
   return (
-    <section id={step.key} class="card" style={`display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px;${locked ? 'opacity:.6' : ''}`} aria-label={step.label}>
+    <section id={step.apiKey} class="card" style={`display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px;${locked ? 'opacity:.6' : ''}`} aria-label={step.label}>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
         <div style="display:flex;flex-direction:column;gap:2px">
           <strong>{step.label}</strong>
@@ -294,5 +324,48 @@ function IntegrationsPanel({ md, saved, busy, onSave }: {
       <p class="small muted" style="margin:8px 0 0">L'aperçu est isolé de l'espace pour la sécurité : certains lecteurs (Wistia) peuvent ne pas s'y lancer. Ils fonctionneront sur la page publiée dans GoHighLevel.</p>
       {viewing && <HtmlViewer block={{ kind: 'page', src: final.html }} title="Landing — version finale" onClose={() => setViewing(false)} />}
     </details>
+  );
+}
+
+/** Brief d'une verticale (décision 0024) : rempli par l'agence, le client ne refait pas son onboarding. */
+function VerticalForm({ clientId, vertical, onDone }: { clientId: string; vertical?: Vertical; onDone: (id?: string) => void }) {
+  const [f, setF] = useState({
+    name: vertical?.name ?? '', avatar: vertical?.avatar ?? '', market: vertical?.market ?? '', competitors: vertical?.competitors ?? '',
+    promiseChanges: vertical?.promiseChanges ?? '', notes: vertical?.notes ?? '',
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (k: keyof typeof f) => (e: Event) => setF({ ...f, [k]: (e.target as HTMLInputElement).value });
+  async function save(e: Event) {
+    e.preventDefault(); setBusy(true); setErr(null);
+    try {
+      if (vertical) { await api(`/clients/${clientId}/delivery/verticales/${vertical.id}`, { method: 'PATCH', body: JSON.stringify(f) }); onDone(); }
+      else { const r = await api<{ id: string }>(`/clients/${clientId}/delivery/verticales`, { method: 'POST', body: JSON.stringify(f) }); onDone(r.id); }
+    } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+  }
+  async function archive() {
+    if (!vertical || !confirm(`Archiver la verticale « ${vertical.name} » ? Ses pièces restent en base, l'onglet disparaît.`)) return;
+    try { await api(`/clients/${clientId}/delivery/verticales/${vertical.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'archivee' }) }); location.href = `/c/${clientId}/delivery`; }
+    catch (x) { setErr((x as Error).message); }
+  }
+  return (
+    <form class={vertical ? '' : 'card section'} onSubmit={save} style="display:flex;flex-direction:column;gap:10px">
+      {!vertical && <h2 class="section-title">Nouvelle verticale</h2>}
+      {!vertical && <p class="small muted" style="margin:0">Une chaîne complète de plus (étapes 0 à 9) pour un autre avatar. Claude reprend de l'onboarding le produit, l'histoire du fondateur, les chiffres et la garantie, et construit tout le reste pour cet avatar. Les livrables publiés apparaissent chez le client, regroupés par verticale.</p>}
+      {err && <div class="banner alert" role="alert">{err}</div>}
+      <label class="field">Nom de la verticale<input required maxLength={120} value={f.name} onInput={set('name')} placeholder="Ex. Espaces verts — jardiniers-paysagistes" /></label>
+      <label class="field">Avatar visé<textarea required rows={3} maxLength={2000} value={f.avatar} onInput={set('avatar')} placeholder="Qui, taille de structure, situation, ce qui l'agace aujourd'hui" /></label>
+      <div class="form-grid">
+        <label class="field">Marché<input maxLength={1000} value={f.market} onInput={set('market')} placeholder="Pays, zone, nombre d'entreprises si connu" /></label>
+        <label class="field">Concurrents de cette verticale<input maxLength={1000} value={f.competitors} onInput={set('competitors')} /></label>
+      </div>
+      <label class="field">Ce qui change dans la promesse<textarea rows={2} maxLength={2000} value={f.promiseChanges} onInput={set('promiseChanges')} placeholder="Douleur, résultat attendu, preuves propres à cette verticale" /></label>
+      <label class="field">Notes pour Claude<textarea rows={2} maxLength={2000} value={f.notes} onInput={set('notes')} /></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" type="submit" disabled={busy}>{busy ? 'Enregistrement…' : vertical ? 'Enregistrer le brief' : 'Créer la verticale'}</button>
+        <button class="ghost-btn" type="button" onClick={() => onDone()}>Annuler</button>
+        {vertical && <button class="ghost-btn" type="button" style="margin-left:auto;color:var(--alert)" onClick={archive}>Archiver la verticale</button>}
+      </div>
+    </form>
   );
 }

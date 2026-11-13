@@ -238,7 +238,7 @@ function editableClient(cl: ClientRow) {
   try { thresholds = JSON.parse(cl.thresholds_json || '{}'); } catch { thresholds = {}; }
   return {
     id: cl.id, name: cl.name, slug: cl.slug, status: cl.status, offer: cl.offer, startDate: cl.start_date,
-    campaignsLaunchedAt: cl.campaigns_launched_at, driveFolderUrl: cl.drive_folder_url ?? null, masterTrackerUrl: cl.master_tracker_url ?? null,
+    campaignsLaunchedAt: cl.campaigns_launched_at, driveFolderUrl: cl.drive_folder_url ?? null, masterTrackerUrl: cl.master_tracker_url ?? null, verticalsEnabled: Boolean(cl.verticals_enabled),
     adAccountCurrency: cl.ad_account_currency, adAccountTimezone: cl.ad_account_timezone,
     autoPublishRecos: Boolean(cl.auto_publish_recos), isDemo: Boolean(cl.is_demo),
     thresholds, defaultThresholds: DEFAULT_THRESHOLDS,
@@ -290,6 +290,7 @@ function parseClientFields(body: Record<string, unknown>) {
     out.ad_account_timezone = tz;
   }
   if ('autoPublishRecos' in body) out.auto_publish_recos = body.autoPublishRecos ? 1 : 0;
+  if ('verticalsEnabled' in body) out.verticals_enabled = body.verticalsEnabled ? 1 : 0;
   if ('thresholds' in body) {
     const t = body.thresholds;
     if (t == null || typeof t !== 'object' || Array.isArray(t)) throw new HttpError(400, 'Seuils invalides.');
@@ -373,7 +374,7 @@ agency.get('/clients/:id/parcours', async (c) => {
     all<{ question_key: string; answer: string | null }>(db, 'SELECT question_key, answer FROM onboarding_answers WHERE client_id = ?1', cl.id),
     first<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM onboarding_assets WHERE client_id = ?1', cl.id),
     all<{ step: string; status: string; content_md: string | null; result_url: string | null; queued_at: string | null }>(db,
-      'SELECT step, status, content_md, result_url, queued_at FROM delivery_steps WHERE client_id = ?1', cl.id),
+      `SELECT step, status, content_md, result_url, queued_at FROM delivery_steps WHERE client_id = ?1 AND instr(step, '@') = 0`, cl.id),
     all<{ type: string; state: string }>(db, 'SELECT type, state FROM connections WHERE client_id = ?1', cl.id),
     first<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM deliverables WHERE client_id = ?1 AND visible_client = 1', cl.id),
   ]);

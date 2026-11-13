@@ -19,7 +19,8 @@ export const useLastSync = (clientId: string) => { const d = useApi<ClientOvervi
 
 interface Infra {
   phases: { key: string; label: string; state: PhaseState; startedAt: string | null; blocker: string | null }[];
-  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; hasContent?: boolean; clientSummary?: string | null; published: boolean; publishedAt?: string | null; comments?: number; clientComments?: number; pendingClientComments?: number }[];
+  deliverables: { id: string; type: string; phase: string; title: string; status: DeliverableStatus; version?: number; externalUrl?: string | null; hasContent?: boolean; clientSummary?: string | null; published: boolean; publishedAt?: string | null; comments?: number; clientComments?: number; pendingClientComments?: number; verticalId?: string | null }[];
+  verticals?: { id: string; name: string }[];
   tasks: Record<'agence' | 'client', Task[]>;
 }
 interface Task { id: string; label: string; description: string | null; phase: string | null; status: string; dueDate: string | null; guideId: string | null; overdue: boolean; blocking: boolean }
@@ -91,8 +92,11 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
                   <DeliverableEditor clientId={clientId} onDone={() => { setEditDeliverable(null); reload(); }} /></div>
               )}
               {data.deliverables.length === 0 && <EmptyState title="Aucun livrable pour le moment">Ils apparaissent ici au fil de la production.</EmptyState>}
+              {deliverableGroups(data).map((g) => (
+              <div style="margin-bottom:16px">
+                {g.title && <h3 class="label" style="font-size:13px;color:var(--primary);margin:6px 0 10px">{g.title}</h3>}
               <div class="grid grid-2 stack">
-                {data.deliverables.map((d) => (
+                {g.items.map((d) => (
                   <article class={`card edge deliverable ${editable && d.pendingClientComments ? 'has-request' : ''}`} style={{ '--edge': d.status === 'valide' ? 'var(--accent)' : d.status === 'a_relire' ? 'var(--warn)' : 'var(--border)' }}>
                     <div class="kpi-row">
                       <span class="label">{DELIVERABLE_TYPE_LABEL[d.type] ?? d.type}{d.version && d.version > 1 ? ` · v${d.version}` : ''}</span>
@@ -126,6 +130,8 @@ export function InfrastructureScreen({ clientId }: { clientId: string }) {
                   </article>
                 ))}
               </div>
+              </div>
+              ))}
             </div>
             <div>
               <SectionTitle a="Qui fait" b="quoi" />
@@ -687,4 +693,15 @@ function PendingRequestsBanner() {
       {data.feedback > 0 && `${data.feedback} retour${data.feedback > 1 ? 's' : ''} à lire`} →
     </a>
   );
+}
+
+/** Livrables regroupés par verticale (décision 0024) ; un seul groupe sans titre quand le client n'en a pas. */
+function deliverableGroups(data: Infra) {
+  const vs = (data.verticals ?? []).filter((v) => data.deliverables.some((d) => d.verticalId === v.id));
+  if (!vs.length) return [{ title: null as string | null, items: data.deliverables }];
+  const main = data.deliverables.filter((d) => !d.verticalId || !vs.some((v) => v.id === d.verticalId));
+  return [
+    ...(main.length ? [{ title: 'Verticale principale' as string | null, items: main }] : []),
+    ...vs.map((v) => ({ title: `Verticale · ${v.name}` as string | null, items: data.deliverables.filter((d) => d.verticalId === v.id) })),
+  ];
 }

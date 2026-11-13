@@ -44,6 +44,7 @@ export interface ClientRow {
   ghl_config_json?: string;
   drive_folder_url?: string | null;
   master_tracker_url?: string | null;
+  verticals_enabled?: number;
   delivery_mechanism?: string | null;
   is_demo: number;
 }

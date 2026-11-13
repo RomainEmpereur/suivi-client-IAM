@@ -6,7 +6,7 @@ import { ErrorBox, Loading, PageHead, SectionTitle } from '../components/ui.tsx'
 interface Editable {
   id: string; name: string; slug: string; status: string; offer: string | null; startDate: string | null;
   campaignsLaunchedAt: string | null; driveFolderUrl: string | null; masterTrackerUrl: string | null; adAccountCurrency: string; adAccountTimezone: string;
-  autoPublishRecos: boolean; isDemo: boolean;
+  autoPublishRecos: boolean; isDemo: boolean; verticalsEnabled: boolean;
   thresholds: Record<string, number>; defaultThresholds: Record<string, number | null>;
 }
 
@@ -48,11 +48,11 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
 
   useEffect(() => {
     const c = data?.client;
-    if (isNew) { setF({ name: '', status: 'onboarding', offer: '', startDate: '', campaignsLaunchedAt: '', driveFolderUrl: '', masterTrackerUrl: '', adAccountCurrency: 'EUR', adAccountTimezone: 'Europe/Paris', autoPublishRecos: true }); setTh({}); return; }
+    if (isNew) { setF({ name: '', status: 'onboarding', offer: '', startDate: '', campaignsLaunchedAt: '', driveFolderUrl: '', masterTrackerUrl: '', adAccountCurrency: 'EUR', adAccountTimezone: 'Europe/Paris', autoPublishRecos: true, verticalsEnabled: false }); setTh({}); return; }
     if (!c) return;
     setF({
       name: c.name, status: c.status, offer: c.offer ?? '', startDate: c.startDate ?? '', campaignsLaunchedAt: c.campaignsLaunchedAt ?? '',
-      driveFolderUrl: c.driveFolderUrl ?? '', masterTrackerUrl: c.masterTrackerUrl ?? '', adAccountCurrency: c.adAccountCurrency, adAccountTimezone: c.adAccountTimezone, autoPublishRecos: c.autoPublishRecos,
+      driveFolderUrl: c.driveFolderUrl ?? '', masterTrackerUrl: c.masterTrackerUrl ?? '', adAccountCurrency: c.adAccountCurrency, adAccountTimezone: c.adAccountTimezone, autoPublishRecos: c.autoPublishRecos, verticalsEnabled: c.verticalsEnabled,
     });
     setTh(Object.fromEntries(THRESHOLDS.map((t) => [t.key, toDisplay(t.unit, c.thresholds[t.key])])));
   }, [data, isNew]);
@@ -110,6 +110,10 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
           <label class="small" style="display:flex;gap:8px;align-items:center;margin-top:14px">
             <input type="checkbox" checked={Boolean(f.autoPublishRecos)} onChange={set('autoPublishRecos')} />
             <span><strong>Publier automatiquement les analyses</strong> : la synthèse et les recommandations deviennent visibles du client dès qu'elles sont rédigées, sans relecture.</span>
+          </label>
+          <label class="small" style="display:flex;gap:8px;align-items:center;margin-top:10px">
+            <input type="checkbox" checked={Boolean(f.verticalsEnabled)} onChange={set('verticalsEnabled')} />
+            <span><strong>Verticales</strong> : ce client a plusieurs avatars ; le Delivery propose des onglets pour construire une chaîne complète par verticale.</span>
           </label>
         </div>
 

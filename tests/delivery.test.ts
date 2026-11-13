@@ -303,3 +303,53 @@ describe('Delivery : reprise d’un livrable à partir des commentaires du clien
     expect((await call(`/clients/${B}/deliverables/${id}/rework`, { as: AGENCE, method: 'POST', body: { note: 'x' } })).status).toBe(409);
   });
 });
+
+describe('Delivery : verticales', () => {
+  it('une verticale a sa propre chaîne, son mécanisme et ses livrables, sans toucher à la principale', async () => {
+    const { call } = boot();
+    await generateAll(call);
+    const mainBefore = await get(call, B);
+    expect((await call(`/clients/${B}/delivery/verticales`, { as: AGENCE, method: 'POST', body: { name: 'Espaces verts', avatar: 'Paysagistes de 3 à 20 salariés' } })).status).toBe(409);
+    await call(`/agence/clients/${B}`, { as: AGENCE, method: 'PATCH', body: { verticalsEnabled: true } });
+    expect((await call(`/clients/${B}/delivery/verticales`, { as: AGENCE, method: 'POST', body: { name: 'Espaces verts' } })).status).toBe(400);
+    const r = await call(`/clients/${B}/delivery/verticales`, { as: AGENCE, method: 'POST', body: { name: 'Espaces verts', avatar: 'Paysagistes de 3 à 20 salariés', competitors: 'Concurrent V' } });
+    expect(r.status).toBe(201);
+    const { id: vid } = (await r.json()) as any;
+    const vd = (await (await call(`/clients/${B}/delivery?verticale=${vid}`, { as: AGENCE })).json()) as any;
+    expect(vd.vertical).toMatchObject({ id: vid, name: 'Espaces verts' });
+    expect(vd.steps.every((s: any) => !s.contentMd && s.apiKey === `${s.key}@${vid}`)).toBe(true);
+    // Lancement de la verticale : seules ses étapes partent en file.
+    const launched = (await (await call(`/clients/${B}/delivery/launch?verticale=${vid}`, { as: AGENCE, method: 'POST' })).json()) as any;
+    expect(launched.queued).toBe(CHAIN.length);
+    const q = (await (await call('/robot/delivery/queue', { headers: robotHeaders })).json()) as any;
+    expect(q.items.map((i: any) => i.step)).toEqual(CHAIN.map((k) => `${k}@${vid}`));
+    expect(q.items[0].clientName).toContain('verticale « Espaces verts »');
+    // Le robot rédige avec les URL de la file, telles quelles.
+    for (const k of CHAIN) {
+      const key = encodeURIComponent(`${k}@${vid}`);
+      if (k === 's0') {
+        const brief = ((await (await call(`/robot/clients/${B}/delivery/${key}/brief`, { headers: robotHeaders })).json()) as any).brief;
+        expect(brief).toContain('## Verticale : Espaces verts');
+        expect(brief).toContain('Paysagistes de 3 à 20 salariés');
+        expect(brief).toContain('## Référence : verticale principale');
+      }
+      const res = await deposit(call, B, key, { contentMd: `# V ${k}`, ...(k === 's1c' ? { mechanism: 'La Méthode Verte' } : {}) });
+      expect(res.status, k).toBe(200);
+    }
+    const after = (await (await call(`/clients/${B}/delivery?verticale=${vid}`, { as: AGENCE })).json()) as any;
+    expect(after.mechanism).toBe('La Méthode Verte');
+    // La principale n'a pas bougé.
+    const mainAfter = await get(call, B);
+    expect(mainAfter.mechanism).toBe('La Méthode Pilote');
+    expect(mainAfter.steps.map((s: any) => [s.key, s.contentVersion])).toEqual(mainBefore.steps.map((s: any) => [s.key, s.contentVersion]));
+    // Validation de l'offre de la verticale → livrable publié, rattaché à la verticale.
+    expect((await patch(call, B, encodeURIComponent(`s1c@${vid}`), { status: 'valide' })).status).toBe(200);
+    const infra = (await (await call(`/clients/${B}/infrastructure`, { as: CLIENT_B })).json()) as any;
+    const dl = infra.deliverables.find((d: any) => d.verticalId === vid);
+    expect(dl).toMatchObject({ title: 'Espaces verts — Offre de trafic froid — page client', published: true });
+    expect(infra.verticals.map((v: any) => v.name)).toContain('Espaces verts');
+    // Reprise par Claude depuis le livrable de la verticale.
+    const page = (await (await call(`/clients/${B}/deliverables/${dl.id}`, { as: AGENCE })).json()) as any;
+    expect(page.rework).toMatchObject({ available: true, step: `s1c@${vid}` });
+  });
+});

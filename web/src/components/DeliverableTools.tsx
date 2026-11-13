@@ -181,7 +181,7 @@ export function ReworkPanel({ clientId, deliverableId, rework, onDone }: { clien
         {rework.available && !rework.queued && rework.proposed && (
           <div class="banner accent" role="status" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <span><strong>Nouvelle version proposée par Claude</strong>{rework.generatedAt ? ` le ${formatDateTime(rework.generatedAt)}` : ''}. Relisez-la et validez-la dans Delivery : la validation la publie pour le client (version suivante, « Mis à jour »).</span>
-            <a class="btn" href={`/c/${clientId}/delivery#${rework.step}`}>Relire et valider →</a>
+            <a class="btn" href={`/c/${clientId}/delivery${rework.step?.includes("@") ? `?verticale=${rework.step.split("@")[1]}` : ""}#${rework.step}`}>Relire et valider →</a>
           </div>
         )}
         {rework.available && !rework.queued && rework.lastError && <div class="banner alert" role="alert">Dernière reprise en échec : {rework.lastError}</div>}
