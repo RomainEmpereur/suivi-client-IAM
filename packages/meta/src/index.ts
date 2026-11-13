@@ -37,6 +37,13 @@ const INSIGHT_FIELDS = ['spend', 'impressions', 'frequency', 'inline_link_clicks
 const ALL_STATUSES = ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'DISAPPROVED', 'PENDING_REVIEW',
   'PREAPPROVED', 'PENDING_BILLING_INFO', 'WITH_ISSUES', 'IN_PROCESS'];
 
+/** « Objet introuvable » (publicité supprimée) : HTTP 400/404, code 100. Toute autre erreur (accès, débit) est remontée. */
+const notFound = (e: unknown) => e instanceof MetaError && (e.status === 404 || (e.status === 400 && e.code === 100));
+
+/** Champs d'une publicité pour l'écran « Vos publicités » (décision 0026) : visuel, texte, aperçu, page. */
+const AD_FIELDS = 'id,name,created_time,effective_status,preview_shareable_link,campaign{name},'
+  + 'creative.thumbnail_width(640).thumbnail_height(640){thumbnail_url,image_url,title,body,object_type,actor_id}';
+
 export function createMetaClient(opts: MetaClientOptions) {
   const f = opts.fetchImpl ?? fetch;
   const maxAttempts = opts.maxAttempts ?? 4;
@@ -109,11 +116,30 @@ export function createMetaClient(opts: MetaClientOptions) {
     /** Publicités actives avec leur visuel et leur lien d'aperçu (écran « Vos publicités », décision 0026). */
     activeAds: (accountId: string) =>
       paged<MetaLiveAd>(`/${actId(accountId)}/ads`, {
-        fields: 'id,name,created_time,effective_status,preview_shareable_link,campaign{name},'
-          + 'creative.thumbnail_width(640).thumbnail_height(640){thumbnail_url,image_url,title,body,object_type,actor_id}',
+        fields: AD_FIELDS,
         filtering: JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE'] }]),
         limit: 100,
       }, 10),
+
+    /**
+     * Publicités par identifiant, quel que soit leur statut (historique de « Vos publicités »), par paquets de 25.
+     * Un identifiant que Meta ne rend plus (publicité supprimée) fait échouer le paquet : on le relit alors publicité par publicité.
+     */
+    adsByIds: async (ids: string[]) => {
+      const out: Record<string, MetaLiveAd> = {};
+      for (let i = 0; i < ids.length; i += 25) {
+        const part = ids.slice(i, i + 25);
+        try {
+          Object.assign(out, await get<Record<string, MetaLiveAd>>('/', { ids: part.join(','), fields: AD_FIELDS }));
+        } catch (e) {
+          if (!notFound(e)) throw e;
+          for (const id of part) {
+            try { out[id] = await get<MetaLiveAd>(`/${id}`, { fields: AD_FIELDS }); } catch (x) { if (!notFound(x)) throw x; }
+          }
+        }
+      }
+      return out;
+    },
 
     /** Statut des publicités (affichage). */
     ads: (accountId: string) =>

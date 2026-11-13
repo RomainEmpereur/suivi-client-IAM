@@ -61,3 +61,81 @@ describe('Vos publicités : écran', () => {
     expect(r.libraryUrl).toContain('view_all_page_id=1234567890');
   });
 });
+
+describe('Vos publicités : historique sur une période', () => {
+  const testKey = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+
+  it('liste les publicités qui ont dépensé, lit leurs visuels dans Meta (lecture seule) et les garde en cache', async () => {
+    const { encryptToken } = await import('../api/src/crypto.ts');
+    const { vi } = await import('vitest');
+    const key = testKey();
+    const { call, raw } = setup({ TOKEN_ENCRYPTION_KEY: key });
+    raw.prepare(`UPDATE connections SET token_ciphertext = ?, external_id = 'act_1' WHERE client_id = ? AND type = 'meta'`).run(await encryptToken('jeton-meta-test', key), A);
+    const today = new Date(); const y = new Date(today.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const from = new Date(today.getTime() - 90 * 86_400_000).toISOString().slice(0, 10);
+    const ids = (raw.prepare(`SELECT DISTINCT entity_id FROM metrics_rollup WHERE client_id = ? AND level = 'ad' AND spend_cents > 0 AND period_start BETWEEN ? AND ?`).all(A, from, y) as any[])
+      .map((r) => r.entity_id).filter((i) => /^\d+$/.test(i));
+    expect(ids.length).toBeGreaterThan(0);
+    const calls: { url: string; method: string }[] = [];
+    const fetchMock = vi.fn(async (u: string, init?: RequestInit) => {
+      calls.push({ url: u, method: init?.method ?? 'GET' });
+      const asked = new URL(u).searchParams.get('ids')!.split(',');
+      return new Response(JSON.stringify(Object.fromEntries(asked.map((id, i) => [id, {
+        id, name: `Pub ${id}`, effective_status: i === 0 ? 'PAUSED' : 'ARCHIVED', preview_shareable_link: `https://fb.me/${id}`,
+        creative: { thumbnail_url: `https://scontent/${id}.jpg`, object_type: 'VIDEO' },
+      }]))));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const r1 = await call(`/clients/${A}/publicites?from=${from}&to=${y}`, { as: CLIENT_A });
+      expect(r1.status).toBe(200);
+      const d = (await r1.json()) as any;
+      expect(d.mode).toBe('periode');
+      expect(d.ads.length).toBe(Math.min(ids.length, 60));
+      expect(d.ads.every((a: any) => a.previewUrl?.startsWith('https://fb.me/') && a.status && a.spendCents > 0)).toBe(true);
+      // Meilleurs résultats d'abord.
+      for (let i = 1; i < d.ads.length; i++) expect((d.ads[i - 1].leads ?? 0) >= (d.ads[i].leads ?? 0)).toBe(true);
+      expect(calls.every((c) => c.method === 'GET' && c.url.startsWith('https://graph.facebook.com/'))).toBe(true);
+      const n = calls.length;
+      // Deuxième ouverture : tout vient du cache.
+      await call(`/clients/${A}/publicites?from=${from}&to=${y}`, { as: CLIENT_A });
+      expect(calls.length).toBe(n);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('Meta injoignable : les chiffres restent, avec un avertissement ; période invalide refusée', async () => {
+    const { encryptToken } = await import('../api/src/crypto.ts');
+    const { vi } = await import('vitest');
+    const key = testKey();
+    const { call, raw } = setup({ TOKEN_ENCRYPTION_KEY: key });
+    raw.prepare(`UPDATE connections SET token_ciphertext = ?, external_id = 'act_1' WHERE client_id = ? AND type = 'meta'`).run(await encryptToken('jeton-meta-test', key), A);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"code":190}}', { status: 401 })));
+    try {
+      const y = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+      const from = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+      const d = (await (await call(`/clients/${A}/publicites?from=${from}&to=${y}`, { as: AGENCE })).json()) as any;
+      expect(d.fetchError).toBeTruthy();
+      expect(d.ads.length).toBeGreaterThan(0);
+      expect(d.ads[0].image).toBeNull();
+      expect((await call(`/clients/${A}/publicites?from=2026-10-10&to=2026-09-01`, { as: AGENCE })).status).toBe(400);
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+describe('Vos publicités : lecture Meta par identifiants', () => {
+  it('une publicité supprimée (code 100) est relue seule ; une erreur d’accès est remontée', async () => {
+    let n = 0;
+    const meta = createMetaClient({ token: 't', maxAttempts: 1, fetchImpl: (async (u: string) => {
+      n++;
+      const url = new URL(u);
+      if (url.searchParams.get('ids')) return new Response('{"error":{"code":100}}', { status: 400 });
+      if (url.pathname.endsWith('/111')) return new Response(JSON.stringify({ id: '111', effective_status: 'PAUSED' }));
+      return new Response('{"error":{"code":100}}', { status: 400 });
+    }) as any });
+    const r = await meta.adsByIds(['111', '222']);
+    expect(Object.keys(r)).toEqual(['111']);
+    expect(n).toBe(3);
+    const denied = createMetaClient({ token: 't', maxAttempts: 1, fetchImpl: (async () => new Response('{"error":{"code":190}}', { status: 401 })) as any });
+    await expect(denied.adsByIds(['111'])).rejects.toThrow();
+  });
+});

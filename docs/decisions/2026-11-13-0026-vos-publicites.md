@@ -15,3 +15,11 @@ Le client veut voir les publicités qui tournent. La médiathèque Meta n'est pa
 - Lien « bibliothèque publicitaire Meta » (public, sans connexion) : `clients.facebook_page_id`, saisi dans la fiche client ou rempli
   automatiquement à la synchro (jamais écrasé s'il est saisi). Seul accès pour les clients sans jeton Meta (imports ponctuels).
 - Migration 0019.
+
+## Complément (13 nov.) : historique sur une période
+- Sélecteur « En ce moment / 30 derniers jours / 90 derniers jours / Période ». Sur une période : les publicités qui ont dépensé
+  (identifiants Meta numériques, chiffres de `metrics_rollup`), quel que soit leur statut aujourd'hui, avec leurs chiffres sur la période,
+  triées par leads puis coût par lead. 60 publicités au plus (les plus dépensières), 400 jours au plus.
+- Visuels lus dans Meta à la demande, en lecture seule (`?ids=` par paquets de 25), cache `meta_ad_creatives` relu au-delà de 2 jours.
+  Publicité que Meta ne rend plus (code 100) → « Supprimée », sans visuel. Erreur d'accès → avertissement, les chiffres restent. Migration 0021.
+- Visible du client et de l'agence. Rien n'est jamais activé ni modifié dans Meta.
