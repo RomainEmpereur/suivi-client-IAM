@@ -3,16 +3,21 @@ import { useApi } from '../api.ts';
 import { EmptyState, ErrorBox, Loading, PageHead, Pill } from '../components/ui.tsx';
 import { renderMarkdown } from '../markdown.ts';
 import { HtmlViewerButtons } from '../components/HtmlViewer.tsx';
-import { CommentsThread } from '../components/DeliverableTools.tsx';
+import { CommentsThread, ReworkPanel, type ReworkState } from '../components/DeliverableTools.tsx';
+import { useState } from 'preact/hooks';
+import { useSession } from '../session.ts';
 
 interface Data {
   deliverable: { id: string; type: string; title: string; status: string; version?: number; publishedAt?: string | null; externalUrl?: string | null; published: boolean };
   contentMd: string | null;
+  rework?: ReworkState;
 }
 
 /** Lecture d'un livrable rédigé, mis en page (client et agence). */
 export function DeliverableScreen({ clientId, deliverableId }: { clientId: string; deliverableId: string }) {
-  const { data, error, loading } = useApi<Data>(`/clients/${clientId}/deliverables/${deliverableId}`);
+  const { data, error, loading, reload } = useApi<Data>(`/clients/${clientId}/deliverables/${deliverableId}`);
+  const { view } = useSession();
+  const [threadKey, setThreadKey] = useState(0);
   const d = data?.deliverable;
   return (
     <>
@@ -35,7 +40,8 @@ export function DeliverableScreen({ clientId, deliverableId }: { clientId: strin
             ? <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span>Ce livrable se consulte dans son document.</span>
                 <a class="btn" href={d.externalUrl} target="_blank" rel="noopener noreferrer">{/^https:\/\/(drive|docs)\.google\.com\//.test(d.externalUrl) ? 'Ouvrir dans Drive ↗' : 'Ouvrir le document ↗'}</a></div>
             : <EmptyState title="Contenu disponible à la publication">Ce livrable est en préparation.</EmptyState>}
-          {(d.published || data!.contentMd || d.externalUrl) && <div id="commentaires"><CommentsThread clientId={clientId} deliverableId={d.id} /></div>}
+          {(d.published || data!.contentMd || d.externalUrl) && <div id="commentaires"><CommentsThread key={threadKey} clientId={clientId} deliverableId={d.id} /></div>}
+          {view === 'agence' && data!.rework && <ReworkPanel clientId={clientId} deliverableId={d.id} rework={data!.rework} onDone={() => { reload(); setThreadKey((k) => k + 1); }} />}
         </>
       )}
     </>

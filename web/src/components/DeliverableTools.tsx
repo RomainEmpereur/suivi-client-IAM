@@ -137,3 +137,80 @@ export function DeliverableEditor({ clientId, deliverable, onDone }: { clientId:
     </form>
   );
 }
+
+export interface ReworkState {
+  available: boolean; reason?: string; step?: string; label?: string; queued?: boolean; instruction?: string | null;
+  proposed?: boolean; generatedAt?: string | null; lastError?: string | null;
+}
+
+/**
+ * Reprise par Claude à partir des commentaires du client (décision 0023) : la consigne part dans la file du delivery,
+ * Claude modifie uniquement ce qui est demandé, l'agence relit et valide la nouvelle version dans Delivery, ce qui la publie.
+ */
+export function ReworkPanel({ clientId, deliverableId, rework, onDone }: { clientId: string; deliverableId: string; rework: ReworkState; onDone: () => void }) {
+  const { data } = useApi<{ comments: Comment[] }>(rework.available && !rework.queued ? `/clients/${clientId}/deliverables/${deliverableId}/comments` : null, [rework.queued]);
+  const clientComments = (data?.comments ?? []).filter((k) => k.authorRole === 'client');
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const selected = picked ?? new Set(clientComments.filter((k) => k.pending).map((k) => k.id));
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const toggle = (id: string) => { const n = new Set(selected); n.has(id) ? n.delete(id) : n.add(id); setPicked(n); };
+
+  async function launch() {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/clients/${clientId}/deliverables/${deliverableId}/rework`, { method: 'POST', body: JSON.stringify({ commentIds: [...selected], note }) });
+      setNote(''); setPicked(null); onDone(); window.dispatchEvent(new Event('demandes-maj'));
+    } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+  }
+
+  return (
+    <section class="section">
+      <h2 class="section-title">Reprise par Claude</h2>
+      <div class="card" style="display:flex;flex-direction:column;gap:10px">
+        {err && <div class="banner alert" role="alert">{err}</div>}
+        {!rework.available && <p class="small muted" style="margin:0">{rework.reason}</p>}
+        {rework.available && rework.queued && (
+          <div class="banner warn" role="status" style="flex-direction:column;align-items:flex-start;gap:6px">
+            <strong>Reprise en cours ({rework.label})</strong>
+            <span class="small">Claude rédige la nouvelle version au prochain passage du robot (chaque heure, de 7 h à 21 h, heure de Paris). Elle arrivera « à valider » dans Delivery ; rien n'est publié avant votre validation.</span>
+            {rework.instruction && <details class="small"><summary>Consigne envoyée</summary><pre style="white-space:pre-wrap;margin:6px 0 0">{rework.instruction}</pre></details>}
+          </div>
+        )}
+        {rework.available && !rework.queued && rework.proposed && (
+          <div class="banner accent" role="status" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span><strong>Nouvelle version proposée par Claude</strong>{rework.generatedAt ? ` le ${formatDateTime(rework.generatedAt)}` : ''}. Relisez-la et validez-la dans Delivery : la validation la publie pour le client (version suivante, « Mis à jour »).</span>
+            <a class="btn" href={`/c/${clientId}/delivery#${rework.step}`}>Relire et valider →</a>
+          </div>
+        )}
+        {rework.available && !rework.queued && rework.lastError && <div class="banner alert" role="alert">Dernière reprise en échec : {rework.lastError}</div>}
+        {rework.available && !rework.queued && (
+          <>
+            <p class="small muted" style="margin:0">Claude reprend ce livrable ({rework.label}) en ne modifiant que ce que demandent les commentaires choisis. La nouvelle version vous est proposée dans Delivery ; vous la publiez en la validant.</p>
+            {clientComments.length === 0
+              ? <p class="small muted" style="margin:0">Aucun commentaire du client sur ce livrable : écrivez la consigne vous-même.</p>
+              : (
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <span class="label">Commentaires du client à prendre en compte</span>
+                  {clientComments.map((k) => (
+                    <label class="small" style="display:flex;gap:8px;align-items:flex-start">
+                      <input type="checkbox" checked={selected.has(k.id)} onChange={() => toggle(k.id)} style="margin-top:3px" />
+                      <span><span class="mono muted">{formatDateTime(k.createdAt)}</span>{k.pending ? <span class="pill corriger" style="margin-left:6px">À traiter</span> : null}<br />{k.body}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            <label class="field">Précision pour Claude (facultatif)
+              <textarea rows={3} maxLength={2000} value={note} placeholder="Ex. garder la promesse actuelle, ne changer que la garantie du paragraphe 3" onInput={(e) => setNote((e.target as HTMLTextAreaElement).value)} />
+            </label>
+            <button class="btn" style="align-self:flex-start" disabled={busy || (selected.size === 0 && !note.trim())} onClick={launch}>
+              {busy ? 'Envoi…' : `Faire reprendre par Claude${selected.size ? ` (${selected.size} commentaire${selected.size > 1 ? 's' : ''})` : ''}`}
+            </button>
+            <span class="hint small muted">Les commentaires choisis passent « traités ». Pensez à répondre au client une fois la nouvelle version publiée.</span>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}

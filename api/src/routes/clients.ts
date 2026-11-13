@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import {
+  DELIVERY_STEP_BY_KEY, formatDate,
   PHASES, computeAppointmentCounter, derived, parisDayStartMs, addDaysYmd, todayParis,
   clientThresholds, safeDiv, type AppointmentLike,
 } from '@obsidian/domain';
@@ -258,7 +259,74 @@ clients.get('/:clientId/deliverables/:deliverableId', async (c) => {
   if (!d) throw notFound();
   const out = serializeDeliverable(d, view);
   if (!out.published && view === 'client') return c.json({ deliverable: out, contentMd: null });
-  return c.json({ deliverable: out, contentMd: d.content_md ?? null });
+  return c.json({ deliverable: out, contentMd: d.content_md ?? null, ...(view === 'agence' ? { rework: await reworkState(c.env.DB, client.id, d) } : {}) });
+});
+
+// ─── Reprise d'un livrable par Claude à partir des commentaires du client (décision 0023) ───
+
+/** Étape de delivery dont vient le livrable (livrables rédigés dans l'espace uniquement). */
+function deliveryStepOf(d: DeliverableRow): string | null {
+  if (d.origin !== 'genere' || !d.generation_json) return null;
+  try { const k = JSON.parse(d.generation_json).delivery_step; return typeof k === 'string' && DELIVERY_STEP_BY_KEY.has(k) ? k : null; } catch { return null; }
+}
+
+async function reworkState(db: D1Database, clientId: string, d: DeliverableRow) {
+  const key = deliveryStepOf(d);
+  if (!key) return { available: false, reason: "Ce livrable n'a pas été rédigé dans l'espace (lien Drive ou document externe) : modifiez-le à la main." };
+  const row = await first<{ status: string; queued_at: string | null; instruction: string | null; content_version: number; generated_at: string | null; last_error: string | null; content_md: string | null }>(db,
+    'SELECT status, queued_at, instruction, content_version, generated_at, last_error, content_md FROM delivery_steps WHERE client_id = ?1 AND step = ?2', clientId, key);
+  if (!row?.content_md) return { available: false, reason: "L'étape de delivery de ce livrable n'a pas de texte à reprendre." };
+  return {
+    available: true, step: key, label: DELIVERY_STEP_BY_KEY.get(key)!.label,
+    queued: Boolean(row.queued_at), instruction: row.queued_at ? row.instruction : null,
+    // Une version proposée par Claude attend la validation de l'agence quand l'étape est « à valider » et diffère du publié.
+    proposed: row.status === 'a_valider' && row.content_md !== d.content_md,
+    generatedAt: row.generated_at, lastError: row.last_error,
+  };
+}
+
+/** L'agence confie à Claude la reprise du livrable, avec les commentaires choisis comme consigne prioritaire. */
+clients.post('/:clientId/deliverables/:deliverableId/rework', async (c) => {
+  requireAgency(c);
+  const db = c.env.DB;
+  const client = c.get('client');
+  const user = c.get('user');
+  const d = await first<DeliverableRow>(db, 'SELECT * FROM deliverables WHERE id = ?1 AND client_id = ?2', c.req.param('deliverableId'), client.id);
+  if (!d) throw notFound();
+  const state = await reworkState(db, client.id, d);
+  if (!state.available) throw new HttpError(409, state.reason!);
+  if (state.queued) throw new HttpError(409, 'Une reprise est déjà en cours pour ce livrable.');
+  const body = await c.req.json<{ commentIds?: unknown; note?: unknown }>().catch(() => ({} as Record<string, unknown>));
+  const ids = Array.isArray(body.commentIds) ? body.commentIds.filter((x): x is string => typeof x === 'string').slice(0, 50) : [];
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : '';
+  const comments = ids.length
+    ? await all<{ id: string; body: string; created_at: string }>(db,
+      `SELECT id, body, created_at FROM deliverable_comments WHERE deliverable_id = ?1 AND author_role = 'client' AND id IN (${ids.map((_, i) => `?${i + 2}`).join(',')}) ORDER BY created_at`, d.id, ...ids)
+    : [];
+  if (!comments.length && !note) throw new HttpError(400, 'Choisissez au moins un commentaire du client ou écrivez une consigne.');
+  const lines = [
+    `Reprise demandée à partir des retours du client sur le livrable publié « ${d.title} » (version ${d.version}).`,
+    'Modifie UNIQUEMENT les éléments visés par ces retours, directement dans la version actuelle reproduite ci-dessous ; garde tout le reste mot pour mot (structure, textes, mécanisme nommé). Si un retour contredit le master prompt (prix, chiffre non sourcé, garantie ou urgence non citées dans l\'onboarding), ne l\'applique pas et explique-le dans « À compléter ». Termine par une courte section « Modifications de cette version » listant chaque changement.',
+  ];
+  if (comments.length) {
+    lines.push('', 'Retours du client :');
+    for (const k of comments) lines.push(`- (${formatDate(k.created_at, { year: true })}) « ${k.body.replace(/\s+/g, ' ').trim()} »`);
+  }
+  if (note) lines.push('', `Précision de l'agence : ${note}`);
+  const instruction = lines.join('\n').slice(0, 6000);
+  const now = nowIso();
+  const stmts = [
+    db.prepare(`UPDATE delivery_steps SET queued_at = ?1, instruction = ?2, last_error = NULL, updated_at = ?1 WHERE client_id = ?3 AND step = ?4`)
+      .bind(now, instruction, client.id, state.step),
+  ];
+  if (comments.length) {
+    stmts.push(db.prepare(`UPDATE deliverable_comments SET handled_at = ?1 WHERE deliverable_id = ?2 AND author_role = 'client' AND handled_at IS NULL AND id IN (${comments.map((_, i) => `?${i + 3}`).join(',')})`)
+      .bind(now, d.id, ...comments.map((k) => k.id)));
+  }
+  await db.batch(stmts);
+  await audit(db, { clientId: client.id, actorId: user.id, actorEmail: user.email, action: 'livrable_reprise_commentaires', objectType: 'deliverable', objectId: d.id,
+    after: { step: state.step, comments: comments.length, note: Boolean(note) } });
+  return c.json({ ok: true, step: state.step });
 });
 
 clients.post('/:clientId/deliverables/:deliverableId/publish', async (c) => {

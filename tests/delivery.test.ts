@@ -255,3 +255,51 @@ describe('Code pour GoHighLevel', () => {
     expect(ghlSnippet('<section>déjà un fragment</section>')).toBe('<section>déjà un fragment</section>');
   });
 });
+
+describe('Delivery : reprise d’un livrable à partir des commentaires du client', () => {
+  it('le commentaire devient la consigne de Claude ; la nouvelle version se publie à la validation', async () => {
+    const { call } = boot();
+    await generateAll(call);
+    expect((await patch(call, B, 's1c', { status: 'valide' })).status).toBe(200);
+    const infra = (await (await call(`/clients/${B}/infrastructure`, { as: CLIENT_B })).json()) as any;
+    const offer = infra.deliverables.find((d: any) => d.title === 'Offre de trafic froid — page client' && d.published);
+    expect(offer).toBeTruthy();
+    const { id: commentId } = (await (await call(`/clients/${B}/deliverables/${offer.id}/comments`, { as: CLIENT_B, method: 'POST', body: { body: 'Remplacez « 48 h » par « une semaine ».' } })).json()) as any;
+    let page = (await (await call(`/clients/${B}/deliverables/${offer.id}`, { as: AGENCE })).json()) as any;
+    expect(page.rework).toMatchObject({ available: true, step: 's1c', queued: false, proposed: false });
+    expect(((await (await call(`/clients/${B}/deliverables/${offer.id}`, { as: CLIENT_B })).json()) as any).rework).toBeUndefined();
+    expect((await call(`/clients/${B}/deliverables/${offer.id}/rework`, { as: CLIENT_B, method: 'POST', body: { commentIds: [commentId] } })).status).toBe(403);
+    expect((await call(`/clients/${B}/deliverables/${offer.id}/rework`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(400);
+    expect((await call(`/clients/${B}/deliverables/${offer.id}/rework`, { as: AGENCE, method: 'POST', body: { commentIds: [commentId], note: 'Ne touchez pas au mécanisme.' } })).status).toBe(200);
+    expect((await call(`/clients/${B}/deliverables/${offer.id}/rework`, { as: AGENCE, method: 'POST', body: { note: 'encore' } })).status).toBe(409);
+    // La consigne arrive dans la file du robot, avec la version actuelle à reprendre.
+    const q = (await (await call('/robot/delivery/queue', { headers: robotHeaders })).json()) as any;
+    const item = q.items.find((i: any) => i.step === 's1c');
+    expect(item.instruction).toContain('Remplacez « 48 h » par « une semaine ».');
+    expect(item.instruction).toContain('Ne touchez pas au mécanisme.');
+    const brief = ((await (await call(`/robot/clients/${B}/delivery/s1c/brief`, { headers: robotHeaders })).json()) as any).brief;
+    expect(brief).toContain("## Consigne de reprise de l'agence (prioritaire)");
+    expect(brief).toContain('## Version actuelle à reprendre');
+    // Le commentaire est traité.
+    const thread = (await (await call(`/clients/${B}/deliverables/${offer.id}/comments`, { as: AGENCE })).json()) as any;
+    expect(thread.comments[0].pending).toBe(false);
+    // Claude dépose : nouvelle version proposée, rien de publié.
+    await deposit(call, B, 's1c', { contentMd: '# Offre v2\n\nUne semaine.' });
+    page = (await (await call(`/clients/${B}/deliverables/${offer.id}`, { as: AGENCE })).json()) as any;
+    expect(page.rework).toMatchObject({ queued: false, proposed: true });
+    expect(page.contentMd).not.toContain('Offre v2');
+    // L'agence valide : la nouvelle version est publiée pour le client.
+    expect((await patch(call, B, 's1c', { status: 'valide' })).status).toBe(200);
+    const after = (await (await call(`/clients/${B}/deliverables/${offer.id}`, { as: CLIENT_B })).json()) as any;
+    expect(after.contentMd).toContain('Offre v2');
+    expect(after.deliverable).toMatchObject({ status: 'mis_a_jour', version: 2 });
+  });
+
+  it('un livrable hors delivery (lien Drive) ne se reprend pas par Claude', async () => {
+    const { call } = boot();
+    const { id } = (await (await call(`/clients/${B}/deliverables`, { as: AGENCE, method: 'POST', body: { type: 'offre', title: 'Offre Drive', externalUrl: 'https://drive.google.com/x', visible: true } })).json()) as any;
+    const page = (await (await call(`/clients/${B}/deliverables/${id}`, { as: AGENCE })).json()) as any;
+    expect(page.rework.available).toBe(false);
+    expect((await call(`/clients/${B}/deliverables/${id}/rework`, { as: AGENCE, method: 'POST', body: { note: 'x' } })).status).toBe(409);
+  });
+});

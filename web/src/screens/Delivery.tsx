@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { formatDate, formatDateTime } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { AgencyNote, ErrorBox, Loading, PageHead, Pill } from '../components/ui.tsx';
@@ -48,6 +48,8 @@ function statusPill(s: Step) {
  */
 export function DeliveryScreen({ clientId }: { clientId: string }) {
   const { data, error, loading, reload } = useApi<DeliveryData>(`/clients/${clientId}/delivery`);
+  // Lien direct vers une étape (#s1c), par exemple depuis « Reprise par Claude » sur un livrable.
+  useEffect(() => { if (data && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [Boolean(data)]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   async function post(path: string, ok: (r: { queued: number }) => string) {
@@ -143,7 +145,7 @@ function StepCard({ clientId, step, mechanism, onChange }: { clientId: string; s
   }
 
   return (
-    <section class="card" style={`display:flex;flex-direction:column;gap:10px;${locked ? 'opacity:.6' : ''}`} aria-label={step.label}>
+    <section id={step.key} class="card" style={`display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px;${locked ? 'opacity:.6' : ''}`} aria-label={step.label}>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
         <div style="display:flex;flex-direction:column;gap:2px">
           <strong>{step.label}</strong>

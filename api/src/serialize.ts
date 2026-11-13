@@ -7,6 +7,7 @@ export interface DeliverableRow {
   external_url: string | null; r2_key: string | null; client_summary: string | null;
   visible_client: number; published_at: string | null; origin: string; updated_at: string;
   content_md?: string | null;
+  generation_json?: string | null;
 }
 
 export function serializeDeliverable(d: DeliverableRow, audience: Audience) {
