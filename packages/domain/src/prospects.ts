@@ -397,6 +397,8 @@ Un système complet, construit et piloté par Obsidian Partners, qui génère de
 | **Paiement 2 — au résultat** · {{CONDITION_RESULTAT}} | **{{PRIX_RESULTAT}}** |
 
 - **Condition du paiement 2** — le seuil de 30 rendez-vous validés doit être atteint sur un scope de 90 jours à compter du lancement des campagnes. Si ce seuil n'est pas atteint dans ce délai, la seconde moitié n'est jamais due.
+- **Ce qui compte comme un rendez-vous** — une démo réservée par un prospect issu des campagnes, qu'il la réserve seul dans l'agenda ou qu'elle soit fixée lors du rappel par votre équipe (chaque nouveau lead doit être rappelé dans les 5 minutes).
+- **Quand un rendez-vous est validé** — dès que le prospect correspond à l'avatar client défini ensemble au démarrage. Un prospect qui correspond à l'avatar mais n'a pas d'urgence ou n'achète pas reste comptabilisé : nous garantissons la qualité des prospects, la vente reste entre vos mains.
 - **Budget publicitaire** — 20 € / jour au lancement (≈ 600 € / mois), réglé directement par le client à Meta. Ajustable ensuite selon les résultats.
 - **Démarrage** — kick-off prévu le {{DEMARRAGE}}.
 
