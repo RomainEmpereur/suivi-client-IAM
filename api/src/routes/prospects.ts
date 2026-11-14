@@ -103,7 +103,7 @@ const parisDay = () => new Date().toLocaleDateString('fr-FR', { timeZone: 'Europ
 function proposalMarkdown(st: Loaded, cfg: Awaited<ReturnType<typeof proposalSettings>>, sections: Record<string, unknown>) {
   const ai = Object.fromEntries(PROPOSAL_AI_FIELDS.map((k) => [k, typeof sections[k] === 'string' ? (sections[k] as string) : null]));
   return renderProposal(cfg.template, {
-    ...ai, ENTREPRISE: st.p.software || st.p.name, PROSPECT: st.p.name, DATE: parisDay(),
+    ...ai, DATE: parisDay(), PRIX_TOTAL: cfg.offer.total,
     PRIX_MISE_EN_PLACE: cfg.offer.setup, PRIX_RESULTAT: cfg.offer.success, CONDITION_RESULTAT: cfg.offer.condition,
   });
 }
@@ -675,8 +675,8 @@ prospects.put('/prospects-reglages', async (c) => {
   }
   if ('proposalOffer' in b) {
     const o = (b.proposalOffer ?? {}) as Record<string, unknown>;
-    const offer = { setup: str(o.setup, 80), success: str(o.success, 80), condition: str(o.condition, 300) };
-    if (!offer.setup || !offer.success || !offer.condition) throw new HttpError(400, "Offre : les deux montants et la condition sont requis.");
+    const offer = { total: str(o.total, 80), setup: str(o.setup, 80), success: str(o.success, 80), condition: str(o.condition, 300) };
+    if (!offer.total || !offer.setup || !offer.success || !offer.condition) throw new HttpError(400, 'Offre : le total, les deux paiements et la condition sont requis.');
     setKey('prospects_proposition_offre', JSON.stringify(offer));
   }
   if ('driveFolder' in b) {
@@ -795,8 +795,8 @@ async function buildBrief(db: D1Database, st: Loaded, type: ProspectDocType, doc
     const cfg = await proposalSettings(db);
     const pitch = st.validated('pitch_r2');
     if (pitch) out.push('## Pitch R2 validé', '```json', pitch.content_json ?? '{}', '```', '');
-    out.push('## Modèle de la proposition (fixe : tu ne rédiges que les champs SITUATION, OBJECTIFS, DEJA_ESSAYE, PLAN, CAS_CLIENT, PROCHAINES_ETAPES)', '```markdown', cfg.template.trim(), '```', '');
-    out.push(`## Offre (insérée par le code, à ne jamais réécrire ni commenter) : mise en place ${cfg.offer.setup} ; ${cfg.offer.success} ${cfg.offer.condition}.`, '');
+    out.push(`## Modèle de la proposition (fixe : tu ne remplis que ${PROPOSAL_AI_FIELDS.join(', ')})`, '```markdown', cfg.template.trim(), '```', '');
+    out.push(`## Offre (insérée par le code, à ne jamais réécrire ni commenter) : total ${cfg.offer.total} ; mise en place ${cfg.offer.setup} ; au résultat ${cfg.offer.success} (${cfg.offer.condition})`, '');
   }
   if (type === 'plan' || type === 'pitch_r2' || type === 'proposition') {
     const cases = await all<CaseStudyRow>(db, 'SELECT * FROM case_studies ORDER BY sort, client');

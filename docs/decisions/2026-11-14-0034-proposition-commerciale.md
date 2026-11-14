@@ -12,3 +12,6 @@ Avant le R2, Romain présente une proposition commerciale. L'offre est presque t
 - Une partie manquante devient « [à compléter] » et bloque la validation jusqu'à correction à la main.
 - Google Doc : après validation, « Créer le Google Doc » met une demande en file (`pr~gdoc`). La tâche planifiée crée le document dans le dossier Drive réglé (`prospects_drive_dossier`) à partir du HTML fourni par le brief (conversion Drive), puis dépose son lien. La fiche affiche « Ouvrir le Google Doc » et « Télécharger en PDF » (export Google). C'est une écriture Drive de plus pour la tâche planifiée : son prompt l'autorise explicitement, dans ce seul dossier.
 - Rien n'est envoyé au prospect depuis l'espace.
+
+## Mise à jour (14 novembre, même jour)
+Le modèle par défaut reprend désormais la proposition réelle de Romain (IREN × Obsidian, 29 septembre 2026), séquences de nurturing en email seulement (plus de SMS). Claude ne remplit plus que quatre champs (`ENTREPRISE`, `LOGICIEL`, `CONTACTS`, `CIBLE`) ; le code insère la date et les prix (total, mise en place, au résultat, condition) ; `{{DEMARRAGE}}` (date du kick-off) reste « [à compléter] » et Romain la saisit avant validation. Les tableaux du modèle sont rendus dans le Google Doc (en-tête bleu marine).

@@ -351,69 +351,58 @@ export const DEFAULT_TUNNEL_CONTEXT = `Ce qu'Obsidian Partners installe pour un 
 
 // ─── Proposition commerciale (décision 0034) ──────────────────────────────────
 
-/** Parties de la proposition rédigées par Claude, à partir de l'analyse et du plan validés. */
-export const PROPOSAL_AI_FIELDS = ['SITUATION', 'OBJECTIFS', 'DEJA_ESSAYE', 'PLAN', 'CAS_CLIENT', 'PROCHAINES_ETAPES'] as const;
+/** Champs de la proposition remplis par Claude, à partir de l'analyse et du plan validés (rien d'inventé : sinon « [à compléter] »). */
+export const PROPOSAL_AI_FIELDS = ['ENTREPRISE', 'LOGICIEL', 'CONTACTS', 'CIBLE'] as const;
 export type ProposalAiField = (typeof PROPOSAL_AI_FIELDS)[number];
-/** Parties remplies par le code : identité, date et prix (jamais par Claude). */
-export const PROPOSAL_CODE_FIELDS = ['ENTREPRISE', 'PROSPECT', 'DATE', 'PRIX_MISE_EN_PLACE', 'PRIX_RESULTAT', 'CONDITION_RESULTAT'] as const;
+/** Champs remplis par le code : date et prix (jamais par Claude). {{DEMARRAGE}} reste « [à compléter] » : Romain saisit la date du kick-off. */
+export const PROPOSAL_CODE_FIELDS = ['DATE', 'PRIX_TOTAL', 'PRIX_MISE_EN_PLACE', 'PRIX_RESULTAT', 'CONDITION_RESULTAT'] as const;
 
-export interface ProposalOffer { setup: string; success: string; condition: string }
+export interface ProposalOffer { total: string; setup: string; success: string; condition: string }
 export const DEFAULT_PROPOSAL_OFFER: ProposalOffer = {
+  total: '3 000 €',
   setup: '1 500 €',
   success: '1 500 €',
-  condition: 'une fois 30 démos ajoutées à votre agenda avec votre avatar client',
+  condition: 'Dû uniquement une fois 30 rendez-vous validés générés.',
 };
 
-export const DEFAULT_PROPOSAL_TEMPLATE = `# Proposition commerciale — {{ENTREPRISE}}
+/** Modèle par défaut, repris de la proposition IREN × Obsidian (29 septembre 2026), séquences de nurturing en email seulement. */
+export const DEFAULT_PROPOSAL_TEMPLATE = `# OBSIDIAN PARTNERS
 
-**Préparée pour** {{PROSPECT}} · **le** {{DATE}} · **par** Romain Auroux, Obsidian Partners
+Infrastructure d'acquisition Meta · **PROPOSITION COMMERCIALE** · {{DATE}}
 
-## 1. Où vous en êtes aujourd'hui
+| PRESTATAIRE | CLIENT |
+|---|---|
+| **Obsidian Partners** | **{{ENTREPRISE}}** |
+| Romain Auroux | Logiciel {{LOGICIEL}} |
+|  | {{CONTACTS}} |
 
-{{SITUATION}}
+## L'INFRASTRUCTURE D'ACQUISITION
 
-## 2. Ce que vous voulez atteindre
+Un système complet, construit et piloté par Obsidian Partners, qui génère des démonstrations qualifiées de {{LOGICIEL}} auprès des {{CIBLE}} via Meta.
 
-{{OBJECTIFS}}
+- **Offre & angles d'attaque** — construction de l'offre cold traffic et des messages centrés sur les problèmes des {{CIBLE}}.
+- **Campagnes Meta** — structure de campagnes, ciblage par verticale métier et créations publicitaires (vidéos et visuels).
+- **Page de conversion + VSL** — landing page avec vidéo de présentation (5 à 8 min) et formulaire de qualification.
+- **Prise de RDV** — agenda de réservation des démos intégré au parcours.
+- **Speed-to-lead** — notification instantanée de chaque nouveau lead (Slack / Discord) pour un rappel en moins de 5 minutes.
+- **Séquences de nurturing** — emails automatisés de confirmation et de rappel pour réduire les absences aux démos.
+- **CRM & pipeline** — suivi de chaque lead de l'inscription jusqu'à la démo, dans un pipeline unique.
+- **Tracking & reporting** — pixel Meta + suivi des KPIs (coût par lead, coût par RDV, taux de présence).
 
-## 3. Ce que vous avez déjà essayé
+## MODÈLE ÉCONOMIQUE
 
-{{DEJA_ESSAYE}}
+| Infrastructure d'acquisition (total) | {{PRIX_TOTAL}} |
+|---|---|
+| **Paiement 1 — à la mise en place** · Dû à la signature, avant le démarrage. | **{{PRIX_MISE_EN_PLACE}}** |
+| **Paiement 2 — au résultat** · {{CONDITION_RESULTAT}} | **{{PRIX_RESULTAT}}** |
 
-## 4. Ce que nous construisons pour vous
-
-Un système d'acquisition complet, construit dans vos propres comptes, pour remplir votre agenda de démos avec votre client idéal :
-
-- **L'offre** : votre offre d'entrée, formulée pour des prospects qui ne vous connaissent pas encore.
-- **La page et la vidéo de présentation** : une page de réservation et une vidéo de 6 à 8 minutes, tournée par vous à partir de notre script.
-- **Les publicités Meta** : les scripts, les visuels et la mise en ligne des campagnes.
-- **Les relances** : les séquences email et SMS qui amènent chaque inscrit jusqu'à la démo.
-- **Le CRM et l'agenda** : GoHighLevel paramétré (pipeline, agenda, rappels) pour que chaque démo soit suivie.
-- **Le pilotage** : un suivi chaque semaine dans votre espace client, avec le coût par démo et nos recommandations.
-
-{{PLAN}}
-
-## 5. Un cas proche du vôtre
-
-{{CAS_CLIENT}}
-
-## 6. L'investissement
-
-- **Mise en place : {{PRIX_MISE_EN_PLACE}}**, à la signature.
-- **{{PRIX_RESULTAT}}** {{CONDITION_RESULTAT}}.
-- Le budget publicitaire est réglé directement par vous à Meta ; il n'est pas compris dans ces montants.
-
-## 7. Ce qui vous appartient
-
-Les comptes publicitaires, le CRM, les pages, les vidéos et les publicités sont créés à votre nom et restent à vous, que nous continuions ensemble ou non.
-
-## 8. Prochaines étapes
-
-{{PROCHAINES_ETAPES}}
+- **Condition du paiement 2** — le seuil de 30 rendez-vous validés doit être atteint sur un scope de 90 jours à compter du lancement des campagnes. Si ce seuil n'est pas atteint dans ce délai, la seconde moitié n'est jamais due.
+- **Budget publicitaire** — 20 € / jour au lancement (≈ 600 € / mois), réglé directement par le client à Meta. Ajustable ensuite selon les résultats.
+- **Démarrage** — kick-off prévu le {{DEMARRAGE}}.
 
 ---
 
-Romain Auroux · Obsidian Partners
+Obsidian Partners
 `;
 
 /** Remplace les {{CHAMPS}} du modèle ; un champ sans valeur devient « [à compléter] » (rien d'inventé). */
@@ -437,7 +426,17 @@ export function proposalHtml(markdown: string, title: string): string {
   const out: string[] = [];
   let list: 'ul' | 'ol' | null = null;
   let para: string[] = [];
+  let table: string[][] | null = null;
+  const NAVY = '#1f2a44', LINE = '#d9d4ca';
+  const flushTable = () => {
+    if (!table) return;
+    const [head, ...rows] = table;
+    const td = (c: string, h: boolean) => `<td style="border:1px solid ${LINE};padding:8px 10px;vertical-align:top;${h ? `background:${NAVY};color:#ffffff;font-weight:bold;` : ''}">${inlineHtml(c)}</td>`;
+    out.push(`<table style="border-collapse:collapse;width:100%">${[`<tr>${head.map((c) => td(c, true)).join('')}</tr>`, ...rows.map((r) => `<tr>${r.map((c) => td(c, false)).join('')}</tr>`)].join('')}</table>`);
+    table = null;
+  };
   const flush = () => {
+    flushTable();
     if (para.length) { out.push(`<p>${inlineHtml(para.join(' '))}</p>`); para = []; }
     if (list) { out.push(`</${list}>`); list = null; }
   };
@@ -445,17 +444,27 @@ export function proposalHtml(markdown: string, title: string): string {
     const line = raw.trimEnd();
     let m: RegExpMatchArray | null;
     if (!line.trim()) { flush(); continue; }
-    if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { flush(); out.push(`<h${m[1].length}>${inlineHtml(m[2])}</h${m[1].length}>`); continue; }
+    if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { flush(); out.push(`<h${m[1].length} style="color:${NAVY}">${inlineHtml(m[2])}</h${m[1].length}>`); continue; }
     if (/^-{3,}$/.test(line.trim())) { flush(); out.push('<hr>'); continue; }
     if ((m = line.match(/^>\s?(.*)$/))) { flush(); out.push(`<blockquote>${inlineHtml(m[1])}</blockquote>`); continue; }
+    if (/^\s*\|/.test(line)) {
+      if (para.length) { out.push(`<p>${inlineHtml(para.join(' '))}</p>`); para = []; }
+      if (list) { out.push(`</${list}>`); list = null; }
+      const cells = (l: string) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+      if (!table) { table = []; }
+      if (!/^\s*\|?\s*:?-{2,}/.test(line)) table.push(cells(line));
+      continue;
+    }
     if ((m = line.match(/^\s*[-*]\s+(.*)$/)) || (m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
       const kind = /^\s*\d/.test(line) ? 'ol' : 'ul';
+      flushTable();
       if (para.length) { out.push(`<p>${inlineHtml(para.join(' '))}</p>`); para = []; }
       if (list !== kind) { if (list) out.push(`</${list}>`); out.push(`<${kind}>`); list = kind; }
       out.push(`<li>${inlineHtml(m[1])}</li>`);
       continue;
     }
     if (list) { out.push(`</${list}>`); list = null; }
+    flushTable();
     para.push(line.trim());
   }
   flush();

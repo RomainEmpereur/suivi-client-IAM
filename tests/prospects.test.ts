@@ -347,28 +347,30 @@ describe('Prospects : proposition commerciale et son Google Doc (décision 0034)
     await deposit(call, id, 'plan', { verticale: { choix: 'Cabinets', raisons: [], suivante: null }, angles: [], coutMaxRdvExplication: '…', actionsSansAgence: ['a'], casClient: { id: 'cs_civex', pourquoi: '…' } });
     await call(`/agence/prospects/${id}/documents/plan`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } });
     // Offre réglée par Romain.
-    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { proposalOffer: { setup: '1 500 € HT', success: '1 500 € HT', condition: 'une fois 30 démos ajoutées avec votre avatar client' } } })).status).toBe(200);
+    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { proposalOffer: { total: '3 000 € HT', setup: '1 500 € HT', success: '1 500 € HT', condition: 'Dû uniquement une fois 30 rendez-vous validés générés.' } } })).status).toBe(200);
     expect((await call(`/agence/prospects/${id}/documents/proposition/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
     const brief = (await (await call(`/robot/clients/${id}/delivery/pr~proposition/brief`, { headers: robotHeaders })).json()) as any;
     expect(brief.masterPrompt).toContain('Tu n\'écris jamais un prix');
-    expect(brief.brief).toContain('{{SITUATION}}');
+    expect(brief.brief).toContain('{{CIBLE}}');
     expect(brief.brief).toContain("Mini plan d'action validé");
     expect(brief.brief).toContain('1 500 € HT');
     expect((await deposit(call, id, 'proposition', { nope: 1 })).status).toBe(400);
-    // Une partie manquante → « [à compléter] » → validation bloquée.
-    await deposit(call, id, 'proposition', { sections: { SITUATION: 'Vous avez 40 clients.', OBJECTIFS: 'Doubler.', DEJA_ESSAYE: 'Une agence LinkedIn.', PLAN: '**Chez vous :** cabinets.', CAS_CLIENT: 'Civex.' } });
+    // Le kick-off n'est jamais rempli par Claude → « [à compléter] » → validation bloquée.
+    await deposit(call, id, 'proposition', { sections: { ENTREPRISE: 'RECRUTIA SAS', LOGICIEL: 'Recrutia', CONTACTS: 'Alexandre F.', CIBLE: 'cabinets comptables' } });
     let d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
     const md = d.docs.proposition.latest.content.markdown as string;
-    expect(md).toContain('# Proposition commerciale — Recrutia');
-    expect(md).toContain('**Mise en place : 1 500 € HT**');
-    expect(md).toContain('une fois 30 démos ajoutées avec votre avatar client');
-    expect(md).toContain('Vous avez 40 clients.');
+    expect(md).toContain('| **Obsidian Partners** | **RECRUTIA SAS** |');
+    expect(md).toContain('démonstrations qualifiées de Recrutia auprès des cabinets comptables via Meta');
+    expect(md).toContain('| Infrastructure d\'acquisition (total) | 3 000 € HT |');
+    expect(md).toContain('**1 500 € HT**');
+    expect(md).toContain('emails automatisés de confirmation et de rappel');
+    expect(md).not.toContain('SMS');
     expect(md).not.toContain('{{');
-    expect(md).toContain('[à compléter]'); // PROCHAINES_ETAPES manquant
+    expect(md).toContain('kick-off prévu le [à compléter]');
     const v1 = await call(`/agence/prospects/${id}/documents/proposition`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } });
     expect(v1.status).toBe(409);
     // Romain complète à la main puis valide.
-    const fixed = { ...d.docs.proposition.latest.content, markdown: md.replace('[à compléter]', '1. Signature\n2. Onboarding') };
+    const fixed = { ...d.docs.proposition.latest.content, markdown: md.replace('[à compléter]', 'mardi 18 novembre 2026') };
     expect((await call(`/agence/prospects/${id}/documents/proposition`, { as: AGENCE, method: 'PATCH', body: { content: fixed } })).status).toBe(200);
     expect((await call(`/agence/prospects/${id}/documents/proposition`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } })).status).toBe(200);
     // Google Doc : dossier Drive requis.
@@ -382,9 +384,12 @@ describe('Prospects : proposition commerciale et son Google Doc (décision 0034)
     expect(queue.items.some((x: any) => x.clientId === id && x.step === 'pr~gdoc')).toBe(true);
     const gb = (await (await call(`/robot/clients/${id}/delivery/pr~gdoc/brief`, { headers: robotHeaders })).json()) as any;
     expect(gb.folderId).toBe('1AbCdEfGhIjKlMnOp');
-    expect(gb.html).toContain('<h1>Proposition commerciale — Recrutia</h1>');
-    expect(gb.html).toContain('<strong>Mise en place : 1 500 € HT</strong>');
-    expect(gb.html).toContain('<li>Signature</li>');
+    expect(gb.html).toContain('OBSIDIAN PARTNERS</h1>');
+    expect(gb.html).toContain('<table');
+    expect(gb.html).toContain('>Infrastructure d&#39;acquisition (total)</td>'.replace('&#39;', "'"));
+    expect(gb.html).toContain('<strong>1 500 € HT</strong>');
+    expect(gb.html).toContain('kick-off prévu le mardi 18 novembre 2026');
+    expect((gb.html.match(/<table/g) ?? []).length).toBe(2);
     expect(gb.masterPrompt).toContain('create_file');
     expect((await call(`/robot/clients/${id}/delivery/pr~gdoc`, { method: 'PUT', headers: robotHeaders, body: { contentMd: 'https://exemple.com' } })).status).toBe(400);
     expect((await call(`/robot/clients/${id}/delivery/pr~gdoc`, { method: 'PUT', headers: robotHeaders, body: { contentMd: 'https://docs.google.com/document/d/1ZyXwVuTsRqPoNm/edit' } })).status).toBe(200);
