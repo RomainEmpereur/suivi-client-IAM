@@ -643,7 +643,7 @@ prospects.put('/prospects-reglages', async (c) => {
       stmts.push(db.prepare(`INSERT INTO case_studies (id, client, target, vertical, figures, url, sort, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ON CONFLICT (id) DO UPDATE SET client = excluded.client, target = excluded.target, vertical = excluded.vertical, figures = excluded.figures,
           url = excluded.url, sort = excluded.sort, updated_at = excluded.updated_at`)
-        .bind(id, client, str(o.target, 300), str(o.vertical, 200), str(o.figures, 2000), str(o.url, 500), i, now));
+        .bind(id, client, str(o.target, 400), null, str(o.figures, 2000), str(o.url, 500), i, now));
     });
     stmts.push(db.prepare(`DELETE FROM case_studies WHERE id NOT IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify(keep)));
   }
@@ -734,7 +734,7 @@ async function buildBrief(db: D1Database, st: Loaded, type: ProspectDocType, doc
   if (type === 'plan' || type === 'pitch_r2') {
     const cases = await all<CaseStudyRow>(db, 'SELECT * FROM case_studies ORDER BY sort, client');
     out.push('## Cas clients disponibles (uniquement ceux-ci, avec leurs chiffres officiels ; une case vide reste vide)');
-    for (const cs of cases) out.push(`- id \`${cs.id}\` — ${cs.client}${cs.target ? ` · cible : ${cs.target}` : ''}${cs.vertical ? ` · verticale : ${cs.vertical}` : ''} · chiffres officiels : ${cs.figures?.trim() || '(non renseignés)'}`);
+    for (const cs of cases) out.push(`- id \`${cs.id}\` — ${cs.client}${cs.target ? ` · cible / verticale (les personnes visées par les publicités) : ${cs.target}` : ''} · chiffres officiels : ${cs.figures?.trim() || '(non renseignés)'}`);
     out.push('');
   }
   if (type === 'plan') out.push('## Compléments de recherche (collés par Romain)', p.market_research?.trim() || '(aucun)', '');

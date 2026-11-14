@@ -753,8 +753,7 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
         {cases.map((c, i) => (
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:8px;align-items:end">
             <label class="field">Client<input value={c.client} onInput={(e) => setCase(i, 'client', (e.target as HTMLInputElement).value)} /></label>
-            <label class="field">Cible<input value={c.target ?? ''} onInput={(e) => setCase(i, 'target', (e.target as HTMLInputElement).value)} /></label>
-            <label class="field">Verticale<input value={c.vertical ?? ''} onInput={(e) => setCase(i, 'vertical', (e.target as HTMLInputElement).value)} /></label>
+            <label class="field" style="grid-column:span 2">Cible / verticale (les personnes visées par les publicités)<input placeholder="Ex. PME du BTP en Île-de-France" value={c.target ?? ''} onInput={(e) => setCase(i, 'target', (e.target as HTMLInputElement).value)} /></label>
             <label class="field">Chiffres officiels<input value={c.figures ?? ''} onInput={(e) => setCase(i, 'figures', (e.target as HTMLInputElement).value)} /></label>
             <label class="field">Lien<input value={c.url ?? ''} onInput={(e) => setCase(i, 'url', (e.target as HTMLInputElement).value)} /></label>
             <button class="ghost-btn small" onClick={() => setCases(cases.filter((_, j) => j !== i))}>Retirer</button>
