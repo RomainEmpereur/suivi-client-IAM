@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
   DEFAULT_MARGIN, DEFAULT_R1_TEMPLATE, PROSPECT_DOC_LABEL, PROSPECT_DOC_TYPES, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_PROMPTS,
-  PROSPECT_STAGES, checkVerbatims, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks,
+  PROSPECT_STAGES, autofillFields, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks,
   type Figures, type ProspectDocType, type ProspectFigure, type ProspectStage, type TemplateBlock,
 } from '@obsidian/domain';
 import type { AppEnv, Bindings } from '../env.ts';
@@ -122,7 +122,11 @@ const sellsInDemo = (st: Loaded) => {
 
 /** Verbatims d'un document vérifiés contre la transcription du R1 et les notes de la trame. */
 function verbatimCheck(st: Loaded, content: unknown) {
-  const sources = [st.r1?.transcript ?? '', Object.values(parseJson<Record<string, unknown>>(st.r1?.notes_json, {})).filter((v) => typeof v === 'string').join('\n')];
+  // Les champs déduits de la transcription par Claude ne servent jamais de source : une citation inventée ne se « confirme » pas elle-même.
+  const notes = parseJson<Record<string, unknown>>(st.r1?.notes_json, {});
+  const deduced = (notes._origines && typeof notes._origines === 'object' ? notes._origines : {}) as Record<string, string>;
+  const typed = Object.entries(notes).filter(([k, v]) => typeof v === 'string' && deduced[k] !== 'transcription').map(([, v]) => v as string);
+  const sources = [st.r1?.transcript ?? '', typed.join('\n')];
   return checkVerbatims(collectVerbatims(content), sources);
 }
 
@@ -135,6 +139,12 @@ function figureGaps(st: Loaded, analyse: DocRow | null) {
 }
 
 /** Ce qui bloque la génération d'un document (null = possible). */
+async function completeness(db: D1Database, st: Loaded) {
+  const tpl = await templateVersion(db, st.r1?.template_version ?? null);
+  const figures = Object.fromEntries(PROSPECT_FIGURES.map((k) => [k, { value: st.figures[k] ?? null, origin: st.figs.find((f) => f.key === k)?.origin ?? null }]));
+  return trameCompleteness(tpl.blocks, parseJson<Record<string, unknown>>(st.r1?.notes_json, {}), figures);
+}
+
 function generationBlocker(st: Loaded, type: ProspectDocType): string | null {
   const disq = st.p.verdict === 'disqualifie' && !st.p.force_continue;
   if (type === 'analyse') return st.r1?.transcript?.trim() || st.r1?.notes_json ? null : 'Collez la transcription du R1 (ou remplissez la trame) avant de lancer l\'analyse.';
@@ -184,7 +194,7 @@ async function serializeFull(db: D1Database, st: Loaded) {
     cost, margin: st.margin, qualification: qualificationChecks(st.figures, sellsInDemo(st), st.margin),
     gaps: figureGaps(st, st.validated('analyse') ?? st.latest('analyse')),
     r1: st.r1 ? serializeCall(st.r1) : null, r2: st.r2 ? serializeCall(st.r2) : null,
-    template: tpl, docs, caseStudies: caseStudies.map(serializeCase),
+    template: tpl, docs, caseStudies: caseStudies.map(serializeCase), completeness: await completeness(db, st),
     flags: flags(st.p, st.r1, st.r2, (t) => Boolean(st.validated(t))),
   };
 }
@@ -384,7 +394,17 @@ prospects.patch('/prospects/:id/calls/:type', async (c) => {
   let notes: Record<string, unknown> | null = null;
   if ('notes' in b) {
     if (!b.notes || typeof b.notes !== 'object' || Array.isArray(b.notes)) throw new HttpError(400, 'Notes invalides.');
-    notes = { ...parseJson<Record<string, unknown>>(call?.notes_json, {}), ...(b.notes as Record<string, unknown>) };
+    const prev = parseJson<Record<string, unknown>>(call?.notes_json, {});
+    const incoming = Object.fromEntries(Object.entries(b.notes as Record<string, unknown>).filter(([k]) => k !== '_origines' && k !== '_verbatims'));
+    notes = { ...prev, ...incoming };
+    // Un champ retouché par Romain n'est plus « déduit de la transcription ».
+    for (const meta of ['_origines', '_verbatims'] as const) {
+      if (prev[meta] && typeof prev[meta] === 'object') {
+        const m = { ...(prev[meta] as Record<string, unknown>) };
+        for (const k of Object.keys(incoming)) delete m[k];
+        notes[meta] = m;
+      }
+    }
     const json = JSON.stringify(notes);
     if (json.length > 60_000) throw new HttpError(400, 'Notes trop longues.');
     set.notes_json = json;
@@ -476,6 +496,11 @@ prospects.patch('/prospects/:id/documents/:type', async (c) => {
     if (type === 'analyse' || type === 'pitch_r2') {
       const missing = verbatimCheck(st, content).filter((x) => !x.found);
       if (missing.length) throw new HttpError(409, `${missing.length} citation(s) introuvable(s) dans la transcription : corrigez-les ou retirez-les avant de valider.`);
+    }
+    // Vérification de la fiche : un élément manquant passe en « à confirmer en R2 », mais seulement si Romain le confirme.
+    if (type === 'analyse' && b.confirmMissing !== true) {
+      const gaps = (await completeness(db, st)).filter((x) => x.status === 'manquant' && x.key !== 'date_r2' && x.key !== 'issue_r1');
+      if (gaps.length) throw new HttpError(409, `Fiche incomplète : ${gaps.map((x) => x.label).join(', ')}. Complétez la trame ou confirmez qu'ils passent en « à confirmer en R2 ».`);
     }
     stmts.push(db.prepare(`UPDATE prospect_documents SET status = 'valide', validated_at = ?1, updated_at = ?1 WHERE id = ?2`).bind(now, doc.id));
     if (type === 'analyse') {
@@ -625,6 +650,17 @@ async function buildBrief(db: D1Database, st: Loaded, type: ProspectDocType, doc
   }
   if (typeof notes._libre === 'string' && notes._libre.trim()) out.push('### Notes libres', notes._libre.trim());
   out.push('');
+  if (type === 'analyse') {
+    const deduced = (notes._origines ?? {}) as Record<string, string>;
+    out.push('## Champs de la trame à compléter depuis la transcription (objet `trame`)',
+      'Pour chaque clé : `{"valeur": …, "verbatim": "citation exacte"}` si c\'est dit dans la transcription, sinon `{"valeur": null, "verbatim": null}`. Un champ déjà saisi par Romain n\'est jamais remplacé.');
+    for (const f of autofillFields(tpl.blocks)) {
+      const v = notes[f.key];
+      const state = v !== undefined && v !== null && String(v).trim() !== '' && deduced[f.key] !== 'transcription' ? 'déjà saisi par Romain' : 'à compléter';
+      out.push(`- \`${f.key}\` — ${f.label}${f.options ? ` (une valeur parmi : ${f.options.map((o) => `« ${o} »`).join(', ')})` : ''} : ${state}`);
+    }
+    out.push('');
+  }
   const analyse = st.validated('analyse');
   const plan = st.validated('plan');
   if (type === 'analyse') {
@@ -696,8 +732,36 @@ robot.put(`/clients/${PR_CLIENT}/delivery/${PR_STEP}`, async (c) => {
         ON CONFLICT (prospect_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at WHERE prospect_figures.origin = 'transcription'`).bind(st.p.id, k, v, now));
     }
   }
+  // Trame complétée depuis la transcription : seulement les champs vides (ou déjà déduits), seulement si la citation est dans la transcription.
+  let filled: string[] = [];
+  if (type === 'analyse' && st.r1 && content.trame && typeof content.trame === 'object') {
+    const tpl = await templateVersion(db, st.r1.template_version ?? null);
+    const notes = parseJson<Record<string, unknown>>(st.r1.notes_json, {});
+    const origins = { ...((notes._origines ?? {}) as Record<string, string>) };
+    const verbs = { ...((notes._verbatims ?? {}) as Record<string, string>) };
+    const transcript = st.r1.transcript ?? '';
+    for (const f of autofillFields(tpl.blocks)) {
+      const e = (content.trame as Record<string, unknown>)[f.key] as { valeur?: unknown; verbatim?: unknown } | undefined;
+      let v = typeof e?.valeur === 'string' ? e.valeur.trim().slice(0, 2000) : '';
+      const q = typeof e?.verbatim === 'string' ? e.verbatim.trim() : '';
+      if (!v || !q || !transcript) continue;
+      const cur = notes[f.key];
+      if (cur !== undefined && cur !== null && String(cur).trim() !== '' && origins[f.key] !== 'transcription') continue;
+      if (f.type === 'choice') {
+        const opt = f.options?.find((o) => o.toLowerCase() === v.toLowerCase());
+        if (!opt) continue;
+        v = opt;
+      }
+      if (!checkVerbatims([q], [transcript])[0]?.found) continue;
+      notes[f.key] = v; origins[f.key] = 'transcription'; verbs[f.key] = q; filled.push(f.key);
+    }
+    if (filled.length) {
+      notes._origines = origins; notes._verbatims = verbs;
+      stmts.push(db.prepare('UPDATE prospect_calls SET notes_json = ?1, updated_at = ?2 WHERE id = ?3').bind(JSON.stringify(notes), now, st.r1.id));
+    }
+  }
   await db.batch(stmts);
-  await audit(db, { clientId: null, ...ROBOT_ACTOR, action: 'prospect_document_depose', objectType: 'prospect', objectId: `${st.p.id}:${type}`, after: { version: doc.version } });
+  await audit(db, { clientId: null, ...ROBOT_ACTOR, action: 'prospect_document_depose', objectType: 'prospect', objectId: `${st.p.id}:${type}`, after: { version: doc.version, trameCompletee: filled } });
   return c.json({ ok: true });
 });
 

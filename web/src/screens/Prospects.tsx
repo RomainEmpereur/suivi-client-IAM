@@ -39,7 +39,10 @@ interface Full {
   r1: Call | null; r2: Call | null; template: { version: number; blocks: TemplateBlock[] };
   docs: Record<ProspectDocType, { latest: Doc | null; validated: Doc | null; blocker: string | null; history: { version: number; status: string }[] }>;
   caseStudies: { id: string; client: string; figures: string | null }[]; flags: string[];
+  completeness: { key: string; label: string; block: string; status: 'trame' | 'transcription' | 'manuel' | 'manquant'; value: string | null; verbatim: string | null }[];
 }
+/** Éléments qui doivent être là avant de valider l'analyse (l'issue et la date du R2 peuvent manquer). */
+const gapsOf = (data: Full) => data.completeness.filter((x) => x.status === 'manquant' && x.key !== 'date_r2' && x.key !== 'issue_r1');
 
 const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)} %`);
 const toLocalInput = (iso: string | null) => (iso ? new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Paris' }).replace(' ', 'T').slice(0, 16) : '');
@@ -286,7 +289,11 @@ function Trame({ data, big = false, onFigures }: { data: Full; big?: boolean; on
   const save = useAutosave(`/agence/prospects/${data.prospect.id}/calls/r1`, onFigures);
   const blocks = data.template.blocks;
   const live = maxCostPerAppointment(Object.fromEntries(blocks.flatMap((b) => b.fields).filter((f) => f.figure).map((f) => [f.figure!, figureFromField(f, notes[f.key]) ?? data.figures[f.figure!].value])), data.margin);
-  const setV = (k: string, v: unknown) => { setNotes({ ...notes, [k]: v }); save.set(k, v); };
+  const deduced = (notes._origines ?? {}) as Record<string, string>;
+  const setV = (k: string, v: unknown) => {
+    const o = { ...deduced }; delete o[k];
+    setNotes({ ...notes, [k]: v, _origines: o }); save.set(k, v);
+  };
   return (
     <div style="display:flex;flex-direction:column;gap:14px">
       <div class="small muted">Trame v{data.template.version} · {save.state === 'saving' ? 'enregistrement…' : save.state === 'saved' ? 'enregistré' : save.state === 'error' ? 'échec de l\'enregistrement' : 'enregistrement automatique'}</div>
@@ -306,7 +313,7 @@ function Trame({ data, big = false, onFigures }: { data: Full; big?: boolean; on
           </div>
           <div style="display:flex;flex-direction:column;gap:8px">
             {b.fields.map((f) => (
-              <label class="field">{f.label}
+              <label class="field"><span>{f.label}{deduced[f.key] === 'transcription' && <span class="small" style="color:var(--warn)"> · déduit de la transcription, à vérifier</span>}</span>
                 {f.type === 'choice'
                   ? <select value={notes[f.key] ?? ''} onChange={(e) => setV(f.key, (e.target as HTMLSelectElement).value)}><option value="">—</option>{f.options!.map((o) => <option value={o}>{o}</option>)}</select>
                   : f.type === 'number'
@@ -346,19 +353,56 @@ function StepR1({ data, reload }: { data: Full; reload: () => void }) {
       </div>
       <Trame data={data} onFigures={reload} />
       <div class="card" style="display:flex;flex-direction:column;gap:8px">
+        <div class="small muted">Ce que vous n'avez pas noté pendant l'appel : l'analyse le reprend de la transcription (citation à l'appui, vérifiée par le code), sans jamais remplacer ce que vous avez saisi.</div>
         <label class="field">Transcription du R1 (collée)<textarea rows={8} value={transcript} onInput={(e) => setTranscript((e.target as HTMLTextAreaElement).value)} placeholder="Collez ici la transcription complète (Fathom, Meet…)" /></label>
         <div class="small muted">{transcript.length.toLocaleString('fr-FR')} caractères</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           {transcript !== (data.r1?.transcript ?? '') && <button class="ghost-btn" onClick={() => patchCall({ transcript }, 'Transcription enregistrée.')}>Enregistrer la transcription</button>}
-          <GenerateButton data={data} type="analyse" reload={reload} label="Analyser" />
+          <GenerateButton data={data} type="analyse" reload={reload} label="Analyser"
+            before={transcript !== (data.r1?.transcript ?? '') ? () => api(`/agence/prospects/${p.id}/calls/r1`, { method: 'PATCH', body: JSON.stringify({ transcript }) }) : undefined} />
           {msg && <span class="small">{msg}</span>}
         </div>
       </div>
+      <FicheCheck data={data} />
     </div>
   );
 }
 
-function GenerateButton({ data, type, reload, label }: { data: Full; type: ProspectDocType; reload: () => void; label?: string }) {
+/** Vérification de la fiche : chaque élément de la trame, saisi, déduit de la transcription ou manquant. */
+function FicheCheck({ data }: { data: Full }) {
+  const items = data.completeness;
+  const n = (s: string) => items.filter((x) => x.status === s).length;
+  const gaps = gapsOf(data);
+  const label: Record<string, string> = { trame: 'saisi', manuel: 'corrigé', transcription: 'transcription', manquant: 'manquant' };
+  const kind: Record<string, string> = { trame: 'ok', manuel: 'ok', transcription: 'surveiller', manquant: 'corriger' };
+  return (
+    <section class="card" style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+        <h3 style="margin:0">Vérification de la fiche</h3>
+        <span class="small muted">{n('trame') + n('manuel')} saisis · {n('transcription')} déduits de la transcription · {n('manquant')} manquants</span>
+      </div>
+      {gaps.length === 0
+        ? <p class="small" style="margin:0;color:var(--accent)">Fiche complète : l'analyse peut être validée.</p>
+        : <p class="small" style="margin:0;color:var(--alert)">À compléter avant de passer à la suite (ou à confirmer en R2) : {gaps.map((x) => x.label).join(', ')}.</p>}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Élément</th><th>Valeur</th><th>Origine</th></tr></thead>
+          <tbody>
+            {items.map((x) => (
+              <tr>
+                <td style="white-space:normal">{x.label}</td>
+                <td style="white-space:normal;max-width:420px">{x.value ?? <span class="muted">—</span>}{x.verbatim && <div class="small muted" style="font-style:italic">« {x.verbatim} »</div>}</td>
+                <td><Pill kind={kind[x.status]}>{label[x.status]}</Pill></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function GenerateButton({ data, type, reload, label, before }: { data: Full; type: ProspectDocType; reload: () => void; label?: string; before?: () => Promise<unknown> }) {
   const d = data.docs[type];
   const [instr, setInstr] = useState('');
   const [open, setOpen] = useState(false);
@@ -368,13 +412,13 @@ function GenerateButton({ data, type, reload, label }: { data: Full; type: Prosp
     setErr(null);
     const confirmHand = d.latest?.editedByHand && d.latest.status === 'brouillon';
     if (confirmHand && !confirm('La dernière version a été modifiée à la main. La faire réécrire quand même ?')) return;
-    try { await api(`/agence/prospects/${data.prospect.id}/documents/${type}/generate`, { method: 'POST', body: JSON.stringify({ instruction: instr, confirm: confirmHand }) }); setOpen(false); setInstr(''); reload(); }
+    try { if (before) await before(); await api(`/agence/prospects/${data.prospect.id}/documents/${type}/generate`, { method: 'POST', body: JSON.stringify({ instruction: instr, confirm: confirmHand }) }); setOpen(false); setInstr(''); reload(); }
     catch (x) { setErr((x as ApiError).message); }
   }
   if (queued) return <Pill kind="info">En rédaction : Claude la rédige au prochain passage (entre 7 h et 21 h)</Pill>;
   return (
     <span style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center">
-      {!open && <button class="btn" disabled={Boolean(d.blocker)} title={d.blocker ?? undefined} onClick={() => (d.latest ? setOpen(true) : go())}>{label ?? (d.latest ? 'Faire réécrire' : `Rédiger : ${PROSPECT_DOC_LABEL[type].toLowerCase()}`)}{d.latest && !label ? '' : ''}</button>}
+      {!open && <button class="btn" disabled={Boolean(d.blocker) && !before} title={d.blocker ?? undefined} onClick={() => (d.latest ? setOpen(true) : go())}>{label ?? (d.latest ? 'Faire réécrire' : `Rédiger : ${PROSPECT_DOC_LABEL[type].toLowerCase()}`)}{d.latest && !label ? '' : ''}</button>}
       {open && <><input style="min-width:280px" placeholder="Consigne (facultatif)" value={instr} onInput={(e) => setInstr((e.target as HTMLInputElement).value)} /><button class="btn" onClick={go}>Envoyer à Claude</button><button class="ghost-btn" onClick={() => setOpen(false)}>Annuler</button></>}
       {d.blocker && <span class="small muted">{d.blocker}</span>}
       {err && <span class="small" style="color:var(--alert)">{err}</span>}
@@ -458,7 +502,11 @@ function DocPanel({ data, type, reload, children }: { data: Full; type: Prospect
       {children}
       {doc && doc.status === 'brouillon' && (
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          {!edit && <button class="btn" disabled={doc.verbatimsMissing > 0} onClick={() => patch({ status: 'valide' })}>Valider</button>}
+          {!edit && <button class="btn" disabled={doc.verbatimsMissing > 0} onClick={() => {
+            const gaps = type === 'analyse' ? gapsOf(data) : [];
+            if (!gaps.length) return patch({ status: 'valide' });
+            if (confirm(`Fiche incomplète : ${gaps.map((x) => x.label).join(', ')}.\n\nCes éléments passeront en « à confirmer en R2 ». Valider quand même ?`)) patch({ status: 'valide', confirmMissing: true });
+          }}>Valider</button>}
           {!edit && <button class="ghost-btn" onClick={() => { setJson(JSON.stringify(doc.content, null, 2)); setEdit(true); }}>Modifier</button>}
           {edit && <><button class="btn" onClick={() => { try { patch({ content: JSON.parse(json) }); } catch { setErr('JSON invalide.'); } }}>Enregistrer</button><button class="ghost-btn" onClick={() => setEdit(false)}>Annuler</button></>}
         </div>
@@ -476,6 +524,7 @@ function StepAnalyse({ data, reload }: { data: Full; reload: () => void }) {
   const sortie = data.docs.analyse.validated?.content?.messageSortie as string | null | undefined;
   return (
     <div style="display:flex;flex-direction:column;gap:14px">
+      <FicheCheck data={data} />
       <DocPanel data={data} type="analyse" reload={reload} />
       {p.verdict === 'disqualifie' && (
         <div class="card" style="display:flex;flex-direction:column;gap:8px">

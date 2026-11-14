@@ -187,3 +187,45 @@ export function figureFromField(field: TemplateField, raw: unknown): number | nu
   if (!Number.isFinite(n)) return null;
   return field.unit === 'pct' ? n / 100 : n;
 }
+
+// ─── Trame complétée depuis la transcription, et vérification de la fiche ─────
+
+/** Champs de la trame qu'une transcription peut compléter : textes et choix, hors chiffres (repris dans `chiffres`) et hors dates. */
+export function autofillFields(blocks: TemplateBlock[]): TemplateField[] {
+  return blocks.flatMap((b) => b.fields).filter((f) => !f.figure && f.type !== 'datetime');
+}
+
+export type TrameOrigin = 'trame' | 'transcription' | 'manuel';
+export interface CompletenessItem { key: string; label: string; block: string; status: TrameOrigin | 'manquant'; value: string | null; verbatim: string | null }
+
+/** Ce qui est rempli dans la fiche, et d'où ça vient. Les notes portent `_origines` et `_verbatims` pour les champs déduits de la transcription. */
+export function trameCompleteness(
+  blocks: TemplateBlock[], notes: Record<string, unknown>,
+  figures: Partial<Record<ProspectFigure, { value: number | null; origin: string | null }>>,
+): CompletenessItem[] {
+  const origins = (notes._origines && typeof notes._origines === 'object' ? notes._origines : {}) as Record<string, string>;
+  const verbatims = (notes._verbatims && typeof notes._verbatims === 'object' ? notes._verbatims : {}) as Record<string, string>;
+  const out: CompletenessItem[] = [];
+  for (const b of blocks) {
+    for (const f of b.fields) {
+      if (f.figure) {
+        const fig = figures[f.figure];
+        const has = fig && fig.value !== null && fig.value !== undefined;
+        out.push({
+          key: f.key, label: f.label, block: b.title,
+          status: has ? ((fig!.origin as TrameOrigin) ?? 'trame') : 'manquant',
+          value: has ? String(f.unit === 'pct' ? Math.round(fig!.value! * 1000) / 10 : fig!.value) : null, verbatim: null,
+        });
+        continue;
+      }
+      const raw = notes[f.key];
+      const v = raw === null || raw === undefined ? '' : String(raw).trim();
+      out.push({
+        key: f.key, label: f.label, block: b.title,
+        status: v ? (origins[f.key] === 'transcription' ? 'transcription' : 'trame') : 'manquant',
+        value: v || null, verbatim: v && origins[f.key] === 'transcription' ? verbatims[f.key] ?? null : null,
+      });
+    }
+  }
+  return out;
+}

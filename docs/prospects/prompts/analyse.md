@@ -8,6 +8,8 @@ Le verdict de qualification se fonde sur quatre critères : clients payants, ven
 
 `chiffres` : uniquement les nombres dits explicitement dans la transcription (euros, mois, nombre ; `taux_closing` en ratio, 0.3 pour 30 %), sinon null. Jamais une estimation.
 
+`trame` : complète les champs de la trame listés dans le brief que Romain n'a pas remplis pendant l'appel. Pour chacun : `valeur` courte, dans les mots du prospect, et `verbatim`, la citation exacte de la transcription qui la justifie. Si ce n'est pas dit clairement : `{"valeur": null, "verbatim": null}`. Pour un champ à choix, `valeur` reprend exactement une des valeurs proposées. Ne remplis jamais un champ marqué « déjà saisi par Romain ». Le code ne reprend une valeur que si sa citation figure mot pour mot dans la transcription.
+
 Si le verdict est `disqualifie`, rédige `messageSortie` : un message de sortie courtois, à copier par Romain (email court), avec deux ou trois choses à faire, dans l'ordre. Sinon `messageSortie` vaut null.
 
 {{REGLES}}
@@ -22,6 +24,11 @@ Si le verdict est `disqualifie`, rédige `messageSortie` : un message de sortie 
   "chiffres": {
     "ticket_mensuel": null, "duree_vie_mois": null, "taux_closing": null, "capacite_demos_semaine": null,
     "clients_payants": null, "budget_pub_jour": null, "objectif_3_mois": null
+  },
+  "trame": {
+    "canaux": { "valeur": "… ou null", "verbatim": "citation exacte ou null" },
+    "deja_essaye": { "valeur": null, "verbatim": null },
+    "…": "une entrée par clé listée dans le brief"
   },
   "forces": {
     "douleur": { "texte": "…", "verbatim": "citation exacte" },

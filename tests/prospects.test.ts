@@ -86,7 +86,12 @@ describe('Prospects : du R1 au R2', () => {
     expect(d.docs.analyse.latest.verbatimsMissing).toBe(1);
     expect((await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } })).status).toBe(409);
     // Romain corrige à la main, puis valide.
-    expect((await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { content: ANALYSE, status: 'valide' } })).status).toBe(200);
+    // Fiche incomplète : la validation demande une confirmation explicite.
+    expect((await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { content: ANALYSE } })).status).toBe(200);
+    const v1 = await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } });
+    expect(v1.status).toBe(409);
+    expect(((await v1.json()) as any).error).toContain('Fiche incomplète');
+    expect((await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide', confirmMissing: true } })).status).toBe(200);
     d = await get();
     expect(d.prospect).toMatchObject({ stage: 'analyse_validee', verdict: 'qualifie', mainObjection: "Ma cible n'est pas sur Facebook" });
     // Les chiffres de la trame priment sur ceux de la transcription.
@@ -144,10 +149,49 @@ describe('Prospects : du R1 au R2', () => {
     expect(list.items[0].flags).toContain('R1 tenu sans analyse depuis plus de 24 h');
     await call(`/agence/prospects/${id}/documents/analyse/generate`, { as: AGENCE, method: 'POST', body: {} });
     await deposit(call, id, 'analyse', { ...ANALYSE, verdict: { valeur: 'disqualifie', raisons: ['pas de clients'] }, messageSortie: 'Merci…' });
-    await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } });
+    await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide', confirmMissing: true } });
     expect((await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(409);
     await call(`/agence/prospects/${id}`, { as: AGENCE, method: 'PATCH', body: { forceContinue: true } });
     expect((await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
+  });
+
+  it('transcription collée : la trame vide est complétée (citation vérifiée), jamais ce que Romain a saisi ; vérification de la fiche', async () => {
+    const { call } = boot();
+    const { id } = (await (await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { name: 'Trame', r1At: '2026-01-01T10:00:00Z' } })).json()) as any;
+    await call(`/agence/prospects/${id}/calls/r1`, { as: AGENCE, method: 'PATCH', body: { status: 'tenu', transcript: TRANSCRIPT, notes: { canaux: 'Salons (noté par Romain)' } } });
+    const brief = (await (await call(`/robot/clients/${id}/delivery/pr~analyse/brief`, { headers: robotHeaders })).json()) as any;
+    await call(`/agence/prospects/${id}/documents/analyse/generate`, { as: AGENCE, method: 'POST', body: {} });
+    const b2 = (await (await call(`/robot/clients/${id}/delivery/pr~analyse/brief`, { headers: robotHeaders })).json()) as any;
+    expect(b2.brief).toContain('`canaux` — Canaux actuels : déjà saisi par Romain');
+    expect(b2.brief).toContain('`declencheur` — Déclencheur : à compléter');
+    expect(b2.masterPrompt).toContain('"trame"');
+    expect(brief).toBeTruthy();
+    await deposit(call, id, 'analyse', { ...ANALYSE, trame: {
+      canaux: { valeur: 'Bouche-à-oreille', verbatim: "c'est le bouche-à-oreille" },            // déjà saisi : ignoré
+      declencheur: { valeur: 'Licenciement en vue', verbatim: 'je vais devoir licencier un commercial' }, // citation exacte : repris
+      deja_essaye: { valeur: 'Agence LinkedIn', verbatim: 'une agence LinkedIn à 5 000 €' },        // citation inventée : ignoré
+      vente_demo: { valeur: 'OUI', verbatim: 'ça ne suffit plus' },                                   // choix normalisé
+      decideurs: { valeur: 'Son associé', verbatim: null },                                           // sans citation : ignoré
+    } });
+    let d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    expect(d.r1.notes).toMatchObject({ canaux: 'Salons (noté par Romain)', declencheur: 'Licenciement en vue', vente_demo: 'oui' });
+    expect(d.r1.notes.deja_essaye).toBeUndefined();
+    expect(d.r1.notes.decideurs).toBeUndefined();
+    const st = Object.fromEntries(d.completeness.map((x: any) => [x.key, x.status]));
+    expect(st).toMatchObject({ canaux: 'trame', declencheur: 'transcription', vente_demo: 'transcription', deja_essaye: 'manquant', decideurs: 'manquant' });
+    expect(d.completeness.find((x: any) => x.key === 'declencheur').verbatim).toBe('je vais devoir licencier un commercial');
+    // La citation inventée dans `trame` bloque aussi la validation.
+    expect(d.docs.analyse.latest.verbatimsMissing).toBe(1);
+    // Romain retouche un champ déduit : il redevient « saisi ».
+    await call(`/agence/prospects/${id}/calls/r1`, { as: AGENCE, method: 'PATCH', body: { notes: { declencheur: 'Licenciement envisagé' } } });
+    d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    expect(d.completeness.find((x: any) => x.key === 'declencheur').status).toBe('trame');
+    expect(d.r1.notes._origines.declencheur).toBeUndefined();
+    // Une nouvelle analyse ne remplace pas ce que Romain a retouché.
+    await call(`/agence/prospects/${id}/documents/analyse/generate`, { as: AGENCE, method: 'POST', body: {} });
+    await deposit(call, id, 'analyse', { ...ANALYSE, trame: { declencheur: { valeur: 'Autre', verbatim: 'ça ne suffit plus' } } });
+    d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    expect(d.r1.notes.declencheur).toBe('Licenciement envisagé');
   });
 
   it('rendez-vous GoHighLevel à venir : listés, fiche créée depuis le rendez-vous, plus listés ensuite ; aucune écriture GHL', async () => {
