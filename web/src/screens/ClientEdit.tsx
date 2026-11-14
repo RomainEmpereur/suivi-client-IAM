@@ -88,6 +88,7 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
       {err && <div class="banner alert" role="alert">{err}</div>}
       {saved && <div class="banner" role="status">{saved}</div>}
       {!isNew && <ProspectOrigin clientId={clientId!} />}
+      {!isNew && <ClientTasks clientId={clientId!} />}
       {!isNew && <Parcours clientId={clientId!} key={saved ?? ''} />}
       <form onSubmit={save}>
         <div class="card section">
@@ -178,4 +179,17 @@ function ProspectOrigin({ clientId }: { clientId: string }) {
   const { data } = useApi<{ items: { id: string; name: string }[] }>(`/agence/prospects?clientId=${encodeURIComponent(clientId)}`, [clientId]);
   if (!data?.items.length) return null;
   return <p class="small section">Prospect d'origine : {data.items.map((p) => <a href={`/agence/prospects/${p.id}`} style="margin-right:8px">{p.name}</a>)}</p>;
+}
+
+/** Tâches de l'agence ouvertes pour ce client (décision 0030). */
+function ClientTasks({ clientId }: { clientId: string }) {
+  const { data } = useApi<{ items: { id: string; title: string; dueDate: string | null; status: string; overdue: boolean }[] }>(`/agence/taches?clientId=${encodeURIComponent(clientId)}`, [clientId]);
+  const open = data?.items.filter((t) => t.status === 'a_faire') ?? [];
+  return (
+    <p class="small section">
+      <a href={`/agence/taches?client=${encodeURIComponent(clientId)}`}>Tâches de ce client</a> : {open.length === 0 ? 'aucune à faire' : open.slice(0, 3).map((t) => (
+        <span style={{ marginRight: '10px', color: t.overdue ? 'var(--alert)' : undefined }}>{t.title}{t.dueDate ? ` (${t.dueDate.split('-').reverse().join('/')})` : ''}</span>
+      ))}{open.length > 3 ? ` et ${open.length - 3} autre(s)` : ''}
+    </p>
+  );
 }

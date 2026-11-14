@@ -20,6 +20,7 @@ import { requests } from './routes/requests.ts';
 import { optimisations } from './routes/optimisations.ts';
 import { ads } from './routes/ads.ts';
 import { prospects } from './routes/prospects.ts';
+import { tasks } from './routes/tasks.ts';
 
 const app = new Hono<AppEnv>().basePath('/api');
 
@@ -41,6 +42,7 @@ app.use('*', authenticate);
 app.route('/', me);
 app.route('/agence', finance);
 app.route('/agence', prospects);
+app.route('/agence', tasks);
 app.route('/agence', requests);
 app.route('/agence', agency);
 app.route('/clients', onboarding);
