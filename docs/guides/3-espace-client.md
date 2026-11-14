@@ -1,5 +1,7 @@
 Votre espace client réunit au même endroit vos résultats publicitaires, votre CRM, l'avancement de votre infrastructure et nos échanges. Ce guide fait le tour des rubriques.
 
+@[Guide de l'espace client d'acquisition](https://www.tella.tv/video/guide-de-l-espace-client-d-acquisition-fhyr72uh)
+
 > Les chiffres sont mis à jour **chaque matin à 6 h** (heure de Paris). Un « — » signifie qu'une mesure n'est pas disponible, avec la raison indiquée juste dessous : ce n'est jamais un zéro caché.
 
 ## 1. Se connecter
