@@ -150,6 +150,33 @@ describe('Prospects : du R1 au R2', () => {
     expect((await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
   });
 
+  it('rendez-vous GoHighLevel à venir : listés, fiche créée depuis le rendez-vous, plus listés ensuite ; aucune écriture GHL', async () => {
+    const { call, raw } = boot();
+    const soon = new Date(Date.now() + 2 * 86400e3).toISOString();
+    raw.exec(`DELETE FROM appointments WHERE client_id = '${A}';
+      INSERT INTO appointments (id, client_id, ghl_appointment_id, contact_name, booked_at, scheduled_at, status, ghl_contact_id) VALUES
+        ('ap_t1', '${A}', 'g1', 'Alexandre F.', '2026-01-01T10:00:00Z', '${soon}', 'prevu', 'ct1'),
+        ('ap_t2', '${A}', 'g2', 'Annulé X.', '2026-01-01T10:00:00Z', '${soon}', 'annule', 'ct2'),
+        ('ap_t3', '${A}', 'g3', 'Passé Y.', '2026-01-01T10:00:00Z', '2020-01-01T10:00:00Z', 'prevu', 'ct3');
+      INSERT INTO crm_leads (client_id, opportunity_id, contact_id, name, source, stage_name) VALUES ('${A}', 'op1', 'ct1', 'Alexandre F', 'Facebook', 'Rendez-vous planifié');`);
+    // Sans réglage : rien ; avec le client choisi : le seul rendez-vous à venir non annulé.
+    expect(((await (await call('/agence/prospects', { as: AGENCE })).json()) as any).upcoming.clientId).toBeNull();
+    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { ghlClientId: A } })).status).toBe(200);
+    let up = ((await (await call('/agence/prospects', { as: AGENCE })).json()) as any).upcoming;
+    expect(up.items.map((x: any) => x.id)).toEqual(['ap_t1']);
+    expect(up.items[0]).toMatchObject({ name: 'Alexandre F.', source: 'Facebook', stage: 'Rendez-vous planifié' });
+    const r = await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { appointmentId: 'ap_t1' } });
+    expect(r.status).toBe(201);
+    const { id } = (await r.json()) as any;
+    const full = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    expect(full.prospect).toMatchObject({ name: 'Alexandre F.', source: 'publicite' });
+    expect(full.r1.scheduledAt).toBe(soon);
+    up = ((await (await call('/agence/prospects', { as: AGENCE })).json()) as any).upcoming;
+    expect(up.items).toEqual([]);
+    expect((await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { appointmentId: 'ap_t1' } })).status).toBe(409);
+    expect((await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { appointmentId: 'ap_inconnu' } })).status).toBe(404);
+  });
+
   it('réglages : marge, cas clients, trame versionnée (une fiche garde sa version)', async () => {
     const { call } = boot();
     const { id } = (await (await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { name: 'P' } })).json()) as any;

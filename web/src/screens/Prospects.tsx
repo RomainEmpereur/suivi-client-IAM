@@ -18,7 +18,8 @@ interface Item {
   id: string; name: string; software: string | null; stage: keyof typeof PROSPECT_STAGE_LABEL; verdict: string | null; mainObjection: string | null;
   r1At: string | null; r1Status: string | null; r2At: string | null; r2Status: string | null; daysIdle: number; flags: string[];
 }
-interface ListData { items: Item[]; kpis: { r1Held30: number; r1ToR2: number | null; r1HeldTotal: number; r2Total: number; signAfterR2: number | null; r2HeldTotal: number; signedTotal: number } }
+interface Upcoming { clientId: string | null; clientName: string | null; syncedAt: string | null; items: { id: string; name: string | null; scheduledAt: string; bookedAt: string; status: string; source: string | null; stage: string | null }[] }
+interface ListData { items: Item[]; upcoming: Upcoming | null; kpis: { r1Held30: number; r1ToR2: number | null; r1HeldTotal: number; r2Total: number; signAfterR2: number | null; r2HeldTotal: number; signedTotal: number } }
 interface Doc {
   id: string; type: ProspectDocType; version: number; status: 'en_file' | 'brouillon' | 'valide' | 'erreur'; content: any; instruction: string | null;
   generatedAt: string | null; validatedAt: string | null; editedByHand: boolean; lastError: string | null; verbatims: { quote: string; found: boolean }[]; verbatimsMissing: number;
@@ -69,6 +70,7 @@ export function ProspectsScreen() {
         <KpiCard label="Passage du R1 au R2" value={pct(k.r1ToR2)} missingReason="Aucun R1 tenu" sub={`${k.r2Total} R2 sur ${k.r1HeldTotal} R1 tenus`} />
         <KpiCard label="Signature après R2" value={pct(k.signAfterR2)} missingReason="Aucun R2 tenu" sub={`${k.signedTotal} signés sur ${k.r2HeldTotal} R2 tenus`} />
       </div>
+      {data.upcoming && <UpcomingAppointments up={data.upcoming} />}
       {creating && <NewProspect onDone={(id) => { setCreating(false); if (id) navigate(`/agence/prospects/${id}`); else reload(); }} />}
       {data.items.length === 0 && !creating ? (
         <EmptyState title="Aucun prospect">Créez la fiche au moment où le R1 est pris : trente secondes, puis la trame s'ouvre pendant l'appel.</EmptyState>
@@ -94,6 +96,48 @@ export function ProspectsScreen() {
         </div>
       )}
     </>
+  );
+}
+
+/** Rendez-vous GoHighLevel à venir sans fiche (synchro quotidienne, lecture seule) : « Créer la fiche » reprend nom, date et source. */
+function UpcomingAppointments({ up }: { up: Upcoming }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  if (!up.clientId) return <p class="small muted section">Aucun GoHighLevel choisi pour les R1 : réglez-le dans <a href="/agence/prospects/reglages">Réglages</a>.</p>;
+  async function create(id: string) {
+    setBusy(id); setErr(null);
+    try { const r = await api<{ id: string }>('/agence/prospects', { method: 'POST', body: JSON.stringify({ appointmentId: id }) }); navigate(`/agence/prospects/${r.id}`); }
+    catch (x) { setErr((x as ApiError).message); setBusy(null); }
+  }
+  return (
+    <section class="card section" style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+        <h3 style="margin:0">Rendez-vous à venir</h3>
+        <span class="small muted">GoHighLevel · {up.clientName}{up.syncedAt ? ` · synchronisé le ${formatDateTime(up.syncedAt)}` : ''}</span>
+      </div>
+      {up.items.length === 0
+        ? <p class="small muted" style="margin:0">Aucun rendez-vous à venir sans fiche. Les nouveaux rendez-vous apparaissent après la synchro du matin (ou une synchro lancée à la main).</p>
+        : (
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Contact</th><th>Source</th><th>Étape GHL</th><th>Pris le</th><th></th></tr></thead>
+              <tbody>
+                {up.items.map((a) => (
+                  <tr>
+                    <td><strong>{formatDateTime(a.scheduledAt)}</strong></td>
+                    <td>{a.name ?? '—'}</td>
+                    <td style="white-space:normal;max-width:260px">{a.source ?? '—'}</td>
+                    <td style="white-space:normal;max-width:220px">{a.stage ?? '—'}</td>
+                    <td>{formatDate(a.bookedAt)}</td>
+                    <td><button class="ghost-btn small" disabled={busy !== null} onClick={() => create(a.id)}>{busy === a.id ? 'Création…' : 'Créer la fiche'}</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      {err && <span class="small" style="color:var(--alert)">{err}</span>}
+    </section>
   );
 }
 
@@ -566,7 +610,7 @@ function CallMode({ data, step, reload }: { data: Full; step: 1 | 4; reload: () 
 
 // ─── Réglages ─────────────────────────────────────────────────────────────────
 
-interface Settings { template: { version: number; blocks: TemplateBlock[] }; templateVersions: { version: number; created_at: string }[]; caseStudies: { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null }[]; margin: number }
+interface Settings { template: { version: number; blocks: TemplateBlock[] }; templateVersions: { version: number; created_at: string }[]; ghlClientId: string | null; clients: { id: string; name: string }[]; caseStudies: { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null }[]; margin: number }
 
 export function ProspectSettingsScreen() {
   const { data, error, reload } = useApi<Settings>('/agence/prospects-reglages', []);
@@ -590,6 +634,14 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
     <>
       <PageHead a="Prospects" b="réglages" right={<a class="ghost-btn" href="/agence/prospects">← Prospects</a>} />
       {msg && <p class="small section">{msg}</p>}
+      <section class="card section" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+        <label class="field">GoHighLevel qui porte vos R1 (rendez-vous à venir)
+          <select value={data.ghlClientId ?? ''} onChange={(e) => put({ ghlClientId: (e.target as HTMLSelectElement).value || null }, 'GoHighLevel des R1 enregistré.')}>
+            <option value="">— aucun —</option>{data.clients.map((c) => <option value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+        <span class="small muted">Lecture seule : les rendez-vous viennent de la synchro de ce client, rien n'est écrit dans GoHighLevel.</span>
+      </section>
       <section class="card section" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
         <label class="field">Marge acceptable (%) — coût max. d'un RDV = ticket × durée × marge × closing<input inputMode="decimal" value={margin} onInput={(e) => setMargin((e.target as HTMLInputElement).value)} /></label>
         <button class="ghost-btn" onClick={() => put({ margin: Number(margin.replace(',', '.')) / 100 }, 'Marge enregistrée.')}>Enregistrer</button>

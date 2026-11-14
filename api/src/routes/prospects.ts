@@ -46,6 +46,37 @@ const OPEN_STAGES: ProspectStage[] = ['r1_a_prevoir', 'r1_fait', 'analyse_valide
 const parseJson = <T>(s: string | null | undefined, fallback: T): T => { try { return s ? JSON.parse(s) as T : fallback; } catch { return fallback; } };
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) || null : null);
 
+/** Client de l'espace dont le GoHighLevel porte les R1 de l'agence (réglage, décision 0028). */
+async function ghlClientId(db: D1Database) {
+  const r = await first<{ value: string | null }>(db, `SELECT value FROM agency_settings WHERE key = 'prospects_ghl_client_id'`);
+  return r?.value || null;
+}
+
+/** Rendez-vous GoHighLevel à venir (synchro quotidienne, lecture seule), sans fiche prospect. Depuis le début du jour (Paris). */
+async function upcomingAppointments(db: D1Database) {
+  const clientId = await ghlClientId(db);
+  if (!clientId) return { clientId: null, clientName: null, syncedAt: null, items: [] };
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Paris' });
+  const since = new Date(Date.parse(`${today}T00:00:00Z`) - 2 * 3600_000).toISOString();
+  const [client, items] = await Promise.all([
+    first<{ name: string; synced: string | null }>(db, `SELECT name, (SELECT MAX(finished_at) FROM sync_runs WHERE client_id = ?1 AND source = 'ghl') AS synced FROM clients WHERE id = ?1`, clientId),
+    all<{ id: string; contact_name: string | null; scheduled_at: string; booked_at: string; status: string; source: string | null; stage: string | null }>(db,
+      `SELECT a.id, a.contact_name, a.scheduled_at, a.booked_at, a.status,
+              (SELECT l.source FROM crm_leads l WHERE l.client_id = a.client_id AND l.contact_id = a.ghl_contact_id ORDER BY l.entered_at DESC LIMIT 1) AS source,
+              (SELECT l.stage_name FROM crm_leads l WHERE l.client_id = a.client_id AND l.contact_id = a.ghl_contact_id ORDER BY l.entered_at DESC LIMIT 1) AS stage
+         FROM appointments a
+        WHERE a.client_id = ?1 AND a.scheduled_at >= ?2 AND a.status != 'annule'
+          AND NOT EXISTS (SELECT 1 FROM prospects p WHERE p.appointment_id = a.id)
+        ORDER BY a.scheduled_at LIMIT 50`, clientId, since),
+  ]);
+  return {
+    clientId, clientName: client?.name ?? null, syncedAt: client?.synced ?? null,
+    items: items.map((a) => ({ id: a.id, name: a.contact_name, scheduledAt: a.scheduled_at, bookedAt: a.booked_at, status: a.status, source: a.source, stage: a.stage })),
+  };
+}
+
+const sourceFromGhl = (s: string | null) => (s && /facebook|instagram|meta|\bfb\b|\big\b/i.test(s) ? 'publicite' : s && /recommand|parrain|referral/i.test(s) ? 'recommandation' : 'autre');
+
 async function margin(db: D1Database) {
   const r = await first<{ value: string }>(db, `SELECT value FROM agency_settings WHERE key = 'prospects_marge_acceptable'`);
   const n = Number(r?.value);
@@ -210,6 +241,7 @@ prospects.get('/prospects', async (c) => {
   const signedAfterR2 = r2Held.filter((x) => rows.find((p) => p.id === x.prospect_id)?.stage === 'signe').length;
   return c.json({
     items,
+    upcoming: c.req.query('clientId') ? null : await upcomingAppointments(db),
     kpis: {
       r1Held30,
       r1ToR2: r1Held.length ? withR2 / r1Held.length : null, r1HeldTotal: r1Held.length, r2Total: withR2,
@@ -222,16 +254,26 @@ prospects.post('/prospects', async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
   const b = await c.req.json().catch(() => null) as Record<string, unknown> | null;
-  const name = str(b?.name, 160);
+  // Depuis un rendez-vous GoHighLevel synchronisé : nom, date du R1 et source repris du rendez-vous (aucune écriture dans GHL).
+  let appt: { id: string; contact_name: string | null; scheduled_at: string; source: string | null } | null = null;
+  if (b?.appointmentId) {
+    const ghlClient = await ghlClientId(db);
+    appt = ghlClient ? await first(db, `SELECT a.id, a.contact_name, a.scheduled_at,
+        (SELECT l.source FROM crm_leads l WHERE l.client_id = a.client_id AND l.contact_id = a.ghl_contact_id ORDER BY l.entered_at DESC LIMIT 1) AS source
+      FROM appointments a WHERE a.id = ?1 AND a.client_id = ?2`, String(b.appointmentId), ghlClient) : null;
+    if (!appt) throw new HttpError(404, 'Rendez-vous introuvable.');
+    if (await first(db, 'SELECT id FROM prospects WHERE appointment_id = ?1', appt.id)) throw new HttpError(409, 'Une fiche existe déjà pour ce rendez-vous.');
+  }
+  const name = str(b?.name, 160) ?? (appt?.contact_name ? appt.contact_name.slice(0, 160) : null);
   if (!name) throw new HttpError(400, 'Nom du prospect requis.');
-  const source = ['publicite', 'recommandation', 'autre'].includes(String(b?.source)) ? String(b!.source) : 'publicite';
-  const r1At = str(b?.r1At, 40);
+  const source = ['publicite', 'recommandation', 'autre'].includes(String(b?.source)) ? String(b!.source) : appt ? sourceFromGhl(appt.source) : 'publicite';
+  const r1At = str(b?.r1At, 40) ?? appt?.scheduled_at ?? null;
   if (r1At && Number.isNaN(Date.parse(r1At))) throw new HttpError(400, 'Date du R1 invalide.');
   const tpl = await activeTemplate(db);
   const id = newId('pr');
   await db.batch([
-    db.prepare(`INSERT INTO prospects (id, name, software, website, email, phone, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
-      .bind(id, name, str(b?.software, 160), str(b?.website, 300), str(b?.email, 200), str(b?.phone, 40), source),
+    db.prepare(`INSERT INTO prospects (id, name, software, website, email, phone, source, appointment_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`)
+      .bind(id, name, str(b?.software, 160), str(b?.website, 300), str(b?.email, 200), str(b?.phone, 40), source, appt?.id ?? null),
     db.prepare(`INSERT INTO prospect_calls (id, prospect_id, type, scheduled_at, template_version) VALUES (?1, ?2, 'r1', ?3, ?4)`).bind(newId('pc'), id, r1At, tpl.version),
   ]);
   await audit(db, { clientId: null, actorId: user.id, actorEmail: user.email, action: 'prospect_creation', objectType: 'prospect', objectId: id });
@@ -483,7 +525,8 @@ prospects.get('/prospects-reglages', async (c) => {
     activeTemplate(db), all<CaseStudyRow>(db, 'SELECT * FROM case_studies ORDER BY sort, client'), margin(db),
     all<{ version: number; created_at: string }>(db, `SELECT version, created_at FROM call_templates WHERE type = 'r1' ORDER BY version DESC`),
   ]);
-  return c.json({ template: tpl, templateVersions: versions, caseStudies: cases.map(serializeCase), margin: m });
+  const clients = await all<{ id: string; name: string }>(db, `SELECT id, name FROM clients ORDER BY name`);
+  return c.json({ template: tpl, templateVersions: versions, caseStudies: cases.map(serializeCase), margin: m, ghlClientId: await ghlClientId(db), clients });
 });
 
 prospects.put('/prospects-reglages', async (c) => {
@@ -497,6 +540,12 @@ prospects.put('/prospects-reglages', async (c) => {
     if (!Number.isFinite(n) || n <= 0 || n > 1) throw new HttpError(400, 'Marge acceptable : entre 0 et 1 (0,25 pour 25 %).');
     stmts.push(db.prepare(`INSERT INTO agency_settings (key, value, updated_at) VALUES ('prospects_marge_acceptable', ?1, ?2)
       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(String(n), now));
+  }
+  if ('ghlClientId' in b) {
+    const v = b.ghlClientId ? String(b.ghlClientId) : null;
+    if (v && !(await first(db, 'SELECT id FROM clients WHERE id = ?1', v))) throw new HttpError(400, 'Client inconnu.');
+    stmts.push(db.prepare(`INSERT INTO agency_settings (key, value, updated_at) VALUES ('prospects_ghl_client_id', ?1, ?2)
+      ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(v, now));
   }
   if ('caseStudies' in b) {
     if (!Array.isArray(b.caseStudies) || b.caseStudies.length > 50) throw new HttpError(400, 'Cas clients invalides.');
