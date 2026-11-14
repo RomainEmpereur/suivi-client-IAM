@@ -238,3 +238,47 @@ describe('Prospects : du R1 au R2', () => {
     expect(d.template.blocks[0].questions[0]).not.toBe('Nouvelle question');
   });
 });
+
+describe('Prospects : « Mettre à jour » l\'analyse depuis la fiche (décision 0031)', () => {
+  it('reprend chiffres et trame saisis après la rédaction, recalcule le coût, sans passer par Claude ; une version validée donne un nouveau brouillon', async () => {
+    const { call } = boot();
+    const { id } = (await (await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { name: 'Liroad' } })).json()) as any;
+    await call(`/agence/prospects/${id}/calls/r1`, { as: AGENCE, method: 'PATCH', body: { status: 'tenu', transcript: TRANSCRIPT, notes: { vente_demo: 'oui' } } });
+    await call(`/agence/prospects/${id}/documents/analyse/generate`, { as: AGENCE, method: 'POST', body: {} });
+    const partial = {
+      ...ANALYSE,
+      fiche: { ...ANALYSE.fiche, ticketMensuel: 'à confirmer en R2', dureeVieClient: 'à confirmer en R2' },
+      chiffres: { ...ANALYSE.chiffres, ticket_mensuel: null, duree_vie_mois: null },
+      verdict: { valeur: 'a_creuser', raisons: ["Coût maximum d'un rendez-vous : non calculable", 'Petit ticket'] },
+      aConfirmerEnR2: ['Ticket mensuel exact', 'Durée de vie client', 'Qui décide'],
+    };
+    expect((await deposit(call, id, 'analyse', partial)).status).toBe(200);
+    // Romain complète la fiche après coup.
+    await call(`/agence/prospects/${id}/figures`, { as: AGENCE, method: 'PUT', body: { ticket_mensuel: 290, duree_vie_mois: 24, taux_closing: 0.2 } });
+    await call(`/agence/prospects/${id}/calls/r1`, { as: AGENCE, method: 'PATCH', body: { notes: { vente_demo: 'oui', decideurs: 'Alexandre et ses deux associés' } } });
+
+    const r = await call(`/agence/prospects/${id}/documents/analyse/refresh`, { as: AGENCE, method: 'POST' });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).changed).toContain('chiffres.ticket_mensuel');
+    let d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    const c = d.docs.analyse.latest.content;
+    expect(d.docs.analyse.latest).toMatchObject({ version: 1, status: 'brouillon', editedByHand: false });
+    expect(c.chiffres).toMatchObject({ ticket_mensuel: 290, duree_vie_mois: 24, taux_closing: 0.2 });
+    expect(c.fiche).toMatchObject({ ticketMensuel: '290 €', dureeVieClient: '24 mois', tauxClosing: '20 %', decideurs: 'Alexandre et ses deux associés' });
+    expect(c.aConfirmerEnR2).toEqual(['Qui décide']);
+    expect(c.verdict.valeur).toBe('a_creuser'); // le jugement ne change pas
+    expect(c.verdict.raisons.join(' ')).toContain('348 €'); // 290 × 24 × 25 % × 20 %
+    expect(c.verdict.raisons).toContain('Petit ticket');
+    expect((await (await call(`/agence/prospects/${id}/documents/analyse/refresh`, { as: AGENCE, method: 'POST' })).json() as any).changed).toEqual([]);
+
+    // Validée puis mise à jour : nouvelle version en brouillon, la validée est conservée.
+    await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide', confirmMissing: true } });
+    await call(`/agence/prospects/${id}/figures`, { as: AGENCE, method: 'PUT', body: { budget_pub_jour: 35 } });
+    expect((await call(`/agence/prospects/${id}/documents/analyse/refresh`, { as: AGENCE, method: 'POST' })).status).toBe(200);
+    d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    expect(d.docs.analyse.latest).toMatchObject({ version: 2, status: 'brouillon' });
+    expect(d.docs.analyse.latest.content.fiche.budgetPublicitaire).toBe('35 €/jour');
+    expect(d.docs.analyse.validated.version).toBe(1);
+    expect((await call(`/agence/prospects/${id}/documents/analyse/refresh`, { as: CLIENT_A, method: 'POST' })).status).toBe(403);
+  });
+});

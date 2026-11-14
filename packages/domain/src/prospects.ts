@@ -229,3 +229,105 @@ export function trameCompleteness(
   }
   return out;
 }
+
+// ─── Mise à jour de l'analyse depuis la fiche (décision 0031) ─────────────────
+
+/** Valeur lisible d'un chiffre (pour la fiche de l'analyse). */
+export function figureText(k: ProspectFigure, v: number | null | undefined): string | null {
+  if (v === null || v === undefined || !Number.isFinite(v)) return null;
+  const u = PROSPECT_FIGURE_LABEL[k].unit;
+  const n = (x: number) => String(Math.round(x * 100) / 100).replace('.', ',');
+  return u === 'pct' ? `${n(v * 100)} %` : u === 'eur' ? `${n(v)} €` : u === 'eur_jour' ? `${n(v)} €/jour` : u === 'mois' ? `${n(v)} mois` : n(v);
+}
+
+/** Champs de la fiche de l'analyse alimentés par les chiffres. */
+const FICHE_FROM_FIGURE: [string, ProspectFigure][] = [
+  ['ticketMensuel', 'ticket_mensuel'], ['dureeVieClient', 'duree_vie_mois'], ['tauxClosing', 'taux_closing'],
+  ['capaciteDemos', 'capacite_demos_semaine'], ['clientsPayants', 'clients_payants'], ['budgetPublicitaire', 'budget_pub_jour'],
+];
+/** Mots qui désignent un chiffre dans les listes « à confirmer » et les raisons du verdict. */
+const FIGURE_WORDS: Record<ProspectFigure, RegExp> = {
+  ticket_mensuel: /ticket|panier|abonnement mensuel/i,
+  duree_vie_mois: /dur[ée]e de vie|r[ée]tention/i,
+  taux_closing: /closing|taux de signature/i,
+  capacite_demos_semaine: /capacit[ée]/i,
+  clients_payants: /clients payants/i,
+  budget_pub_jour: /budget/i,
+  objectif_3_mois: /objectif|3 mois|trois mois/i,
+};
+const COST_WORDS = /co[uû]t max|co[uû]t maximum/i;
+
+/**
+ * « Mettre à jour » l'analyse (décision 0031) : reprend, sans réécriture par Claude, ce que Romain a saisi depuis
+ * dans la trame et les chiffres. Chiffres, fiche, champs de la trame, coût maximum et contrôles recalculés par le code ;
+ * les points « à confirmer » désormais renseignés disparaissent. Le verdict lui-même (jugement) ne change pas.
+ */
+export function refreshAnalyse(
+  content: Record<string, unknown>,
+  ctx: { figures: Figures; notes: Record<string, unknown>; blocks: TemplateBlock[]; margin: number; sellsInDemo: boolean | null },
+): { content: Record<string, unknown>; changed: string[] } {
+  const out = JSON.parse(JSON.stringify(content ?? {})) as Record<string, unknown>;
+  const changed: string[] = [];
+  const has = (k: ProspectFigure) => ctx.figures[k] !== null && ctx.figures[k] !== undefined && Number.isFinite(ctx.figures[k] as number);
+
+  // Chiffres : ceux de la fiche (trame, corrections de Romain, transcription), une absence reste null.
+  const chiffres = { ...((out.chiffres && typeof out.chiffres === 'object' ? out.chiffres : {}) as Record<string, unknown>) };
+  for (const k of PROSPECT_FIGURES) {
+    const v = has(k) ? ctx.figures[k]! : null;
+    if (chiffres[k] !== v) { chiffres[k] = v; changed.push(`chiffres.${k}`); }
+  }
+  out.chiffres = chiffres;
+
+  // Fiche : valeurs chiffrées lisibles, décideurs saisis dans la trame.
+  const fiche = { ...((out.fiche && typeof out.fiche === 'object' ? out.fiche : {}) as Record<string, unknown>) };
+  for (const [field, k] of FICHE_FROM_FIGURE) {
+    const t = figureText(k, ctx.figures[k]);
+    if (t && fiche[field] !== t) { fiche[field] = t; changed.push(`fiche.${field}`); }
+  }
+  const origins = (ctx.notes._origines && typeof ctx.notes._origines === 'object' ? ctx.notes._origines : {}) as Record<string, string>;
+  const typed = (key: string) => {
+    const v = ctx.notes[key];
+    return typeof v === 'string' && v.trim() && origins[key] !== 'transcription' ? v.trim() : null;
+  };
+  const dec = typed('decideurs');
+  if (dec && fiche.decideurs !== dec) { fiche.decideurs = dec; changed.push('fiche.decideurs'); }
+  out.fiche = fiche;
+
+  // Trame : un champ saisi par Romain remplace la valeur déduite (sans citation : c'est sa saisie).
+  if (out.trame && typeof out.trame === 'object') {
+    const trame = { ...(out.trame as Record<string, unknown>) };
+    for (const f of autofillFields(ctx.blocks)) {
+      const v = typed(f.key);
+      const cur = trame[f.key] as { valeur?: unknown } | undefined;
+      if (v && cur?.valeur !== v) { trame[f.key] = { valeur: v, verbatim: null }; changed.push(`trame.${f.key}`); }
+    }
+    out.trame = trame;
+  }
+
+  // À confirmer en R2 : un point qui porte sur un chiffre désormais renseigné disparaît.
+  const filledWords = PROSPECT_FIGURES.filter(has).map((k) => FIGURE_WORDS[k]);
+  const cost = maxCostPerAppointment(ctx.figures, ctx.margin);
+  if (Array.isArray(out.aConfirmerEnR2)) {
+    const before = out.aConfirmerEnR2.length;
+    out.aConfirmerEnR2 = out.aConfirmerEnR2.filter((x) => {
+      const s = typeof x === 'string' ? x : JSON.stringify(x);
+      if (cost.value !== null && COST_WORDS.test(s)) return false;
+      return !filledWords.some((re) => re.test(s));
+    });
+    if ((out.aConfirmerEnR2 as unknown[]).length !== before) changed.push('aConfirmerEnR2');
+  }
+
+  // Raisons du verdict : les lignes chiffrées sont refaites par le code ; le verdict ne change pas.
+  if (out.verdict && typeof out.verdict === 'object') {
+    const verdict = { ...(out.verdict as Record<string, unknown>) };
+    const raisons = Array.isArray(verdict.raisons) ? (verdict.raisons as unknown[]).filter((x) => typeof x === 'string') as string[] : [];
+    const kept = raisons.filter((r) => !COST_WORDS.test(r) && !/^Budget pub/i.test(r) && !/^Clients payants/i.test(r) && !/^Calcul (du code|mis à jour)/i.test(r));
+    const computed = qualificationChecks(ctx.figures, ctx.sellsInDemo, ctx.margin)
+      .filter((q) => q.label !== 'Vend en démo')
+      .map((q) => `Calcul mis à jour — ${q.label} : ${q.ok === null ? 'à confirmer en R2' : q.ok ? 'oui' : 'non'} (${q.detail})`);
+    const next = [...computed, ...kept];
+    if (JSON.stringify(next) !== JSON.stringify(raisons)) { verdict.raisons = next; changed.push('verdict.raisons'); }
+    out.verdict = verdict;
+  }
+  return { content: out, changed };
+}

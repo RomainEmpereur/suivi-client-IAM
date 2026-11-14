@@ -402,6 +402,26 @@ function FicheCheck({ data }: { data: Full }) {
   );
 }
 
+/** « Mettre à jour » (décision 0031) : reprend la trame et les chiffres saisis, sans réécriture par Claude. */
+function RefreshAnalyseButton({ data, reload }: { data: Full; reload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  async function go() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api<{ changed: string[]; version: number }>(`/agence/prospects/${data.prospect.id}/documents/analyse/refresh`, { method: 'POST' });
+      setMsg({ ok: true, text: r.changed.length ? `Analyse mise à jour (${r.changed.length} élément${r.changed.length > 1 ? 's' : ''}).` : 'Déjà à jour.' });
+      if (r.changed.length) reload();
+    } catch (x) { setMsg({ ok: false, text: (x as ApiError).message }); } finally { setBusy(false); }
+  }
+  return (
+    <>
+      <button class="ghost-btn" disabled={busy} title="Reprend la trame et les chiffres saisis, recalcule le coût maximum et les contrôles, sans réécriture par Claude" onClick={go}>{busy ? 'Mise à jour…' : 'Mettre à jour'}</button>
+      {msg && <span class="small" style={{ color: msg.ok ? 'var(--accent)' : 'var(--alert)' }}>{msg.text}</span>}
+    </>
+  );
+}
+
 function GenerateButton({ data, type, reload, label, before }: { data: Full; type: ProspectDocType; reload: () => void; label?: string; before?: () => Promise<unknown> }) {
   const d = data.docs[type];
   const [instr, setInstr] = useState('');
@@ -491,7 +511,10 @@ function DocPanel({ data, type, reload, children }: { data: Full; type: Prospect
         <h3 style="margin:0">{PROSPECT_DOC_LABEL[type]}</h3>
         {doc && <Pill kind={doc.status === 'valide' ? 'ok' : doc.status === 'erreur' ? 'corriger' : 'surveiller'}>{doc.status === 'valide' ? `Validé · v${doc.version}` : doc.status === 'erreur' ? 'Échec' : `Brouillon · v${doc.version}`}</Pill>}
         {doc?.editedByHand && <span class="small muted">modifié à la main</span>}
-        <span style="margin-left:auto"><GenerateButton data={data} type={type} reload={reload} /></span>
+        <span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center">
+          {type === 'analyse' && doc && d.latest?.status !== 'en_file' && <RefreshAnalyseButton data={data} reload={reload} />}
+          <GenerateButton data={data} type={type} reload={reload} />
+        </span>
       </div>
       {d.latest?.status === 'erreur' && <p class="small" style="color:var(--alert);margin:0">Échec de la rédaction : {d.latest.lastError}</p>}
       {doc && doc.verbatimsMissing > 0 && <p class="small" style="color:var(--alert);margin:0"><strong>{doc.verbatimsMissing} citation(s) introuvable(s) dans la transcription</strong> : corrigez-les ou retirez-les (Modifier) avant de valider.</p>}

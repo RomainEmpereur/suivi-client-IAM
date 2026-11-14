@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
   DEFAULT_MARGIN, DEFAULT_R1_TEMPLATE, PROSPECT_DOC_LABEL, PROSPECT_DOC_TYPES, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_PROMPTS,
-  PROSPECT_STAGES, autofillFields, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks,
+  PROSPECT_STAGES, autofillFields, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks, refreshAnalyse,
   type Figures, type ProspectDocType, type ProspectFigure, type ProspectStage, type TemplateBlock,
 } from '@obsidian/domain';
 import type { AppEnv, Bindings } from '../env.ts';
@@ -466,6 +466,36 @@ prospects.post('/prospects/:id/documents/:type/generate', async (c) => {
   ]);
   await audit(db, { clientId: null, actorId: user.id, actorEmail: user.email, action: 'prospect_generation_demandee', objectType: 'prospect', objectId: `${st.p.id}:${type}` });
   return c.json({ ok: true });
+});
+
+/**
+ * « Mettre à jour » l'analyse (décision 0031) : reprend la trame et les chiffres saisis depuis, sans passer par Claude.
+ * Un brouillon est mis à jour sur place ; une version validée donne une nouvelle version en brouillon, à valider.
+ */
+prospects.post('/prospects/:id/documents/analyse/refresh', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user');
+  const st = await load(db, c.req.param('id'));
+  const doc = st.latest('analyse');
+  if (!doc || doc.status === 'en_file' || doc.status === 'erreur' || !doc.content_json) throw new HttpError(409, "Aucune analyse rédigée à mettre à jour.");
+  const tpl = await templateVersion(db, st.r1?.template_version ?? null);
+  const { content, changed } = refreshAnalyse(parseJson<Record<string, unknown>>(doc.content_json, {}), {
+    figures: st.figures, notes: parseJson<Record<string, unknown>>(st.r1?.notes_json, {}), blocks: tpl.blocks, margin: st.margin, sellsInDemo: sellsInDemo(st),
+  });
+  if (!changed.length) return c.json({ ok: true, changed, version: doc.version });
+  const now = nowIso();
+  const json = JSON.stringify(content);
+  let version = doc.version;
+  if (doc.status === 'valide') {
+    version = doc.version + 1;
+    await db.prepare(`INSERT INTO prospect_documents (id, prospect_id, type, version, status, content_json, model, generated_at, edited_by_hand)
+      VALUES (?1, ?2, 'analyse', ?3, 'brouillon', ?4, 'mise à jour depuis la fiche', ?5, ?6)`).bind(newId('pd'), st.p.id, version, json, now, doc.edited_by_hand).run();
+  } else {
+    await db.prepare(`UPDATE prospect_documents SET content_json = ?1, updated_at = ?2 WHERE id = ?3`).bind(json, now, doc.id).run();
+  }
+  await touch(db, st.p.id, now).run();
+  await audit(db, { clientId: null, actorId: user.id, actorEmail: user.email, action: 'prospect_analyse_mise_a_jour', objectType: 'prospect', objectId: `${st.p.id}:analyse`, after: { version, changed } });
+  return c.json({ ok: true, changed, version });
 });
 
 /** Modifier le contenu de la dernière version (brouillon), ou la valider. */
