@@ -331,3 +331,67 @@ describe('Prospects : recherche marché par Claude, puis plan sur le tunnel des 
     expect(((await (await call('/agence/prospects-reglages', { as: AGENCE })).json()) as any).tunnelContextIsDefault).toBe(true);
   });
 });
+
+describe('Prospects : proposition commerciale et son Google Doc (décision 0034)', () => {
+  it('modèle + parties rédigées par Claude + prix du code ; « [à compléter] » bloque ; Google Doc demandé, créé par la tâche, lien déposé', async () => {
+    const { call } = boot();
+    const { id } = (await (await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { name: 'Alexandre F.', software: 'Recrutia', r1At: '2026-01-01T10:00:00Z' } })).json()) as any;
+    await call(`/agence/prospects/${id}/calls/r1`, { as: AGENCE, method: 'PATCH', body: { status: 'tenu', transcript: TRANSCRIPT } });
+    // Analyse, puis notes de recherche, puis plan validés.
+    await call(`/agence/prospects/${id}/documents/analyse/generate`, { as: AGENCE, method: 'POST', body: {} });
+    await deposit(call, id, 'analyse', ANALYSE);
+    await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide', confirmMissing: true } });
+    expect((await call(`/agence/prospects/${id}/documents/proposition/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(409); // plan d'abord
+    await call(`/agence/prospects/${id}`, { as: AGENCE, method: 'PATCH', body: { marketResearch: 'Notes de Romain.' } });
+    await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} });
+    await deposit(call, id, 'plan', { verticale: { choix: 'Cabinets', raisons: [], suivante: null }, angles: [], coutMaxRdvExplication: '…', actionsSansAgence: ['a'], casClient: { id: 'cs_civex', pourquoi: '…' } });
+    await call(`/agence/prospects/${id}/documents/plan`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } });
+    // Offre réglée par Romain.
+    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { proposalOffer: { setup: '1 500 € HT', success: '1 500 € HT', condition: 'une fois 30 démos ajoutées avec votre avatar client' } } })).status).toBe(200);
+    expect((await call(`/agence/prospects/${id}/documents/proposition/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
+    const brief = (await (await call(`/robot/clients/${id}/delivery/pr~proposition/brief`, { headers: robotHeaders })).json()) as any;
+    expect(brief.masterPrompt).toContain('Tu n\'écris jamais un prix');
+    expect(brief.brief).toContain('{{SITUATION}}');
+    expect(brief.brief).toContain("Mini plan d'action validé");
+    expect(brief.brief).toContain('1 500 € HT');
+    expect((await deposit(call, id, 'proposition', { nope: 1 })).status).toBe(400);
+    // Une partie manquante → « [à compléter] » → validation bloquée.
+    await deposit(call, id, 'proposition', { sections: { SITUATION: 'Vous avez 40 clients.', OBJECTIFS: 'Doubler.', DEJA_ESSAYE: 'Une agence LinkedIn.', PLAN: '**Chez vous :** cabinets.', CAS_CLIENT: 'Civex.' } });
+    let d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    const md = d.docs.proposition.latest.content.markdown as string;
+    expect(md).toContain('# Proposition commerciale — Recrutia');
+    expect(md).toContain('**Mise en place : 1 500 € HT**');
+    expect(md).toContain('une fois 30 démos ajoutées avec votre avatar client');
+    expect(md).toContain('Vous avez 40 clients.');
+    expect(md).not.toContain('{{');
+    expect(md).toContain('[à compléter]'); // PROCHAINES_ETAPES manquant
+    const v1 = await call(`/agence/prospects/${id}/documents/proposition`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } });
+    expect(v1.status).toBe(409);
+    // Romain complète à la main puis valide.
+    const fixed = { ...d.docs.proposition.latest.content, markdown: md.replace('[à compléter]', '1. Signature\n2. Onboarding') };
+    expect((await call(`/agence/prospects/${id}/documents/proposition`, { as: AGENCE, method: 'PATCH', body: { content: fixed } })).status).toBe(200);
+    expect((await call(`/agence/prospects/${id}/documents/proposition`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } })).status).toBe(200);
+    // Google Doc : dossier Drive requis.
+    const g0 = await call(`/agence/prospects/${id}/documents/proposition/gdoc`, { as: AGENCE, method: 'POST', body: {} });
+    expect(g0.status).toBe(409);
+    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { driveFolder: 'pas un lien' } })).status).toBe(400);
+    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { driveFolder: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOp?usp=sharing' } })).status).toBe(200);
+    expect((await call(`/agence/prospects/${id}/documents/proposition/gdoc`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
+    expect((await call(`/agence/prospects/${id}/documents/proposition/gdoc`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(409); // déjà demandé
+    const queue = (await (await call('/robot/delivery/queue', { headers: robotHeaders })).json()) as any;
+    expect(queue.items.some((x: any) => x.clientId === id && x.step === 'pr~gdoc')).toBe(true);
+    const gb = (await (await call(`/robot/clients/${id}/delivery/pr~gdoc/brief`, { headers: robotHeaders })).json()) as any;
+    expect(gb.folderId).toBe('1AbCdEfGhIjKlMnOp');
+    expect(gb.html).toContain('<h1>Proposition commerciale — Recrutia</h1>');
+    expect(gb.html).toContain('<strong>Mise en place : 1 500 € HT</strong>');
+    expect(gb.html).toContain('<li>Signature</li>');
+    expect(gb.masterPrompt).toContain('create_file');
+    expect((await call(`/robot/clients/${id}/delivery/pr~gdoc`, { method: 'PUT', headers: robotHeaders, body: { contentMd: 'https://exemple.com' } })).status).toBe(400);
+    expect((await call(`/robot/clients/${id}/delivery/pr~gdoc`, { method: 'PUT', headers: robotHeaders, body: { contentMd: 'https://docs.google.com/document/d/1ZyXwVuTsRqPoNm/edit' } })).status).toBe(200);
+    d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    expect(d.docs.proposition.validated.gdoc).toMatchObject({ status: 'cree', url: 'https://docs.google.com/document/d/1ZyXwVuTsRqPoNm/edit' });
+    const q2 = (await (await call('/robot/delivery/queue', { headers: robotHeaders })).json()) as any;
+    expect(q2.items.some((x: any) => x.step === 'pr~gdoc')).toBe(false);
+    expect((await call(`/robot/clients/${id}/delivery/pr~gdoc/brief`, { headers: robotHeaders })).status).toBe(409);
+  });
+});

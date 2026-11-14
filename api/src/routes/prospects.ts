@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
   DEFAULT_MARGIN, DEFAULT_R1_TEMPLATE, DEFAULT_TUNNEL_CONTEXT, PROSPECT_DOC_LABEL, PROSPECT_DOC_TYPES, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_PROMPTS,
-  PROSPECT_STAGES, autofillFields, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks, refreshAnalyse,
+  PROSPECT_STAGES, DEFAULT_PROPOSAL_OFFER, DEFAULT_PROPOSAL_TEMPLATE, PROPOSAL_AI_FIELDS, autofillFields, proposalHtml, renderProposal, type ProposalOffer, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks, refreshAnalyse,
   type Figures, type ProspectDocType, type ProspectFigure, type ProspectStage, type TemplateBlock,
 } from '@obsidian/domain';
 import type { AppEnv, Bindings } from '../env.ts';
@@ -37,6 +37,7 @@ interface DocRow {
   id: string; prospect_id: string; type: ProspectDocType; version: number; status: 'en_file' | 'brouillon' | 'valide' | 'erreur';
   content_json: string | null; instruction: string | null; model: string | null; generated_at: string | null; validated_at: string | null;
   edited_by_hand: number; last_error: string | null; created_at: string;
+  gdoc_status: 'demande' | 'cree' | 'erreur' | null; gdoc_url: string | null; gdoc_error: string | null; gdoc_requested_at: string | null;
 }
 interface FigureRow { key: ProspectFigure; value: number | null; origin: 'trame' | 'transcription' | 'manuel' }
 interface CaseStudyRow { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null; sort: number }
@@ -87,6 +88,24 @@ async function margin(db: D1Database) {
 async function tunnelContext(db: D1Database) {
   const r = await first<{ value: string | null }>(db, `SELECT value FROM agency_settings WHERE key = 'prospects_contexte_tunnel'`);
   return r?.value?.trim() || DEFAULT_TUNNEL_CONTEXT;
+}
+
+/** Proposition commerciale (décision 0034) : modèle, offre (prix saisis par Romain, insérés par le code) et dossier Drive. */
+async function proposalSettings(db: D1Database) {
+  const rows = await all<{ key: string; value: string | null }>(db,
+    `SELECT key, value FROM agency_settings WHERE key IN ('prospects_proposition_modele','prospects_proposition_offre','prospects_drive_dossier')`);
+  const get = (k: string) => rows.find((r) => r.key === k)?.value?.trim() || null;
+  const offer = { ...DEFAULT_PROPOSAL_OFFER, ...parseJson<Partial<ProposalOffer>>(get('prospects_proposition_offre'), {}) };
+  return { template: get('prospects_proposition_modele') ?? DEFAULT_PROPOSAL_TEMPLATE, templateIsDefault: !get('prospects_proposition_modele'), offer, folderId: get('prospects_drive_dossier') };
+}
+const driveFolderId = (v: string) => v.match(/folders\/([A-Za-z0-9_-]{10,})/)?.[1] ?? (/^[A-Za-z0-9_-]{10,}$/.test(v) ? v : null);
+const parisDay = () => new Date().toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'long', year: 'numeric' });
+function proposalMarkdown(st: Loaded, cfg: Awaited<ReturnType<typeof proposalSettings>>, sections: Record<string, unknown>) {
+  const ai = Object.fromEntries(PROPOSAL_AI_FIELDS.map((k) => [k, typeof sections[k] === 'string' ? (sections[k] as string) : null]));
+  return renderProposal(cfg.template, {
+    ...ai, ENTREPRISE: st.p.software || st.p.name, PROSPECT: st.p.name, DATE: parisDay(),
+    PRIX_MISE_EN_PLACE: cfg.offer.setup, PRIX_RESULTAT: cfg.offer.success, CONDITION_RESULTAT: cfg.offer.condition,
+  });
 }
 
 /** Trame active (version 1 = trame par défaut, créée à la première lecture). */
@@ -171,6 +190,7 @@ function serializeDoc(st: Loaded, d: DocRow | null) {
     id: d.id, type: d.type, version: d.version, status: d.status, content, instruction: d.instruction, generatedAt: d.generated_at, validatedAt: d.validated_at,
     editedByHand: Boolean(d.edited_by_hand), lastError: d.last_error, createdAt: d.created_at,
     verbatims: checks, verbatimsMissing: checks.filter((x) => !x.found).length,
+    gdoc: d.type === 'proposition' ? { status: d.gdoc_status, url: d.gdoc_url, error: d.gdoc_error, requestedAt: d.gdoc_requested_at } : null,
   };
 }
 
@@ -544,6 +564,9 @@ prospects.patch('/prospects/:id/documents/:type', async (c) => {
   if (b.status === 'valide') {
     if (doc.status !== 'brouillon') throw new HttpError(409, 'Seul un brouillon se valide.');
     if (!content) throw new HttpError(409, 'Document vide.');
+    if (type === 'proposition' && String((content as { markdown?: unknown }).markdown ?? '').includes('[à compléter]')) {
+      throw new HttpError(409, 'La proposition contient encore « [à compléter] » : complétez-la (Modifier) avant de la valider.');
+    }
     if (type === 'analyse' || type === 'pitch_r2') {
       const missing = verbatimCheck(st, content).filter((x) => !x.found);
       if (missing.length) throw new HttpError(409, `${missing.length} citation(s) introuvable(s) dans la transcription : corrigez-les ou retirez-les avant de valider.`);
@@ -570,6 +593,24 @@ prospects.patch('/prospects/:id/documents/:type', async (c) => {
   stmts.push(touch(db, st.p.id, now, stage));
   await db.batch(stmts);
   await audit(db, { clientId: null, actorId: user.id, actorEmail: user.email, action: 'prospect_document_modifie', objectType: 'prospect', objectId: `${st.p.id}:${type}`, after: { status: b.status ?? null, edited: 'content' in b } });
+  return c.json({ ok: true });
+});
+
+/** Demande du Google Doc de la proposition validée : créé par la tâche planifiée au prochain passage (décision 0034). */
+prospects.post('/prospects/:id/documents/proposition/gdoc', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user');
+  const st = await load(db, c.req.param('id'));
+  const doc = st.validated('proposition');
+  if (!doc) throw new HttpError(409, "Validez d'abord la proposition commerciale.");
+  if (doc.gdoc_status === 'demande') throw new HttpError(409, 'Google Doc déjà demandé : il sera créé au prochain passage.');
+  if (!(await proposalSettings(db)).folderId) throw new HttpError(409, 'Renseignez le dossier Google Drive des propositions dans Prospects → Réglages.');
+  const now = nowIso();
+  await db.batch([
+    db.prepare(`UPDATE prospect_documents SET gdoc_status = 'demande', gdoc_error = NULL, gdoc_requested_at = ?1, updated_at = ?1 WHERE id = ?2`).bind(now, doc.id),
+    touch(db, st.p.id, now),
+  ]);
+  await audit(db, { clientId: null, actorId: user.id, actorEmail: user.email, action: 'prospect_proposition_gdoc_demande', objectType: 'prospect', objectId: st.p.id, after: { version: doc.version } });
   return c.json({ ok: true });
 });
 
@@ -604,7 +645,7 @@ prospects.get('/prospects-reglages', async (c) => {
   const clients = await all<{ id: string; name: string }>(db, `SELECT id, name FROM clients ORDER BY name`);
   const tc = await first<{ value: string | null }>(db, `SELECT value FROM agency_settings WHERE key = 'prospects_contexte_tunnel'`);
   return c.json({ template: tpl, templateVersions: versions, caseStudies: cases.map(serializeCase), margin: m, ghlClientId: await ghlClientId(db), clients,
-    tunnelContext: tc?.value?.trim() || DEFAULT_TUNNEL_CONTEXT, tunnelContextIsDefault: !tc?.value?.trim() });
+    tunnelContext: tc?.value?.trim() || DEFAULT_TUNNEL_CONTEXT, tunnelContextIsDefault: !tc?.value?.trim(), proposal: await proposalSettings(db) });
 });
 
 prospects.put('/prospects-reglages', async (c) => {
@@ -624,6 +665,25 @@ prospects.put('/prospects-reglages', async (c) => {
     if (v.length > 8000) throw new HttpError(400, 'Contexte du tunnel trop long (8 000 caractères au plus).');
     stmts.push(db.prepare(`INSERT INTO agency_settings (key, value, updated_at) VALUES ('prospects_contexte_tunnel', ?1, ?2)
       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(v || null, now));
+  }
+  const setKey = (key: string, value: string | null) => stmts.push(db.prepare(`INSERT INTO agency_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+      ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(key, value, now));
+  if ('proposalTemplate' in b) {
+    const v = b.proposalTemplate == null ? '' : String(b.proposalTemplate).trim();
+    if (v.length > 20_000) throw new HttpError(400, 'Modèle de proposition trop long (20 000 caractères au plus).');
+    setKey('prospects_proposition_modele', v || null);
+  }
+  if ('proposalOffer' in b) {
+    const o = (b.proposalOffer ?? {}) as Record<string, unknown>;
+    const offer = { setup: str(o.setup, 80), success: str(o.success, 80), condition: str(o.condition, 300) };
+    if (!offer.setup || !offer.success || !offer.condition) throw new HttpError(400, "Offre : les deux montants et la condition sont requis.");
+    setKey('prospects_proposition_offre', JSON.stringify(offer));
+  }
+  if ('driveFolder' in b) {
+    const raw = b.driveFolder == null ? '' : String(b.driveFolder).trim();
+    const id = raw ? driveFolderId(raw) : null;
+    if (raw && !id) throw new HttpError(400, 'Dossier Drive : collez le lien du dossier ou son identifiant.');
+    setKey('prospects_drive_dossier', id);
   }
   if ('ghlClientId' in b) {
     const v = b.ghlClientId ? String(b.ghlClientId) : null;
@@ -729,9 +789,16 @@ async function buildBrief(db: D1Database, st: Loaded, type: ProspectDocType, doc
     const recherche = st.validated('recherche');
     if (type !== 'recherche' && recherche) out.push('## Recherche marché validée', '```json', recherche.content_json ?? '{}', '```', '');
     if (type !== 'recherche') out.push("## Contexte du tunnel de vente d'Obsidian Partners pour les SaaS (la méthode à appliquer au marché du prospect)", await tunnelContext(db), '');
-    if ((type === 'script_loom' || type === 'pitch_r2') && plan) out.push("## Mini plan d'action validé", '```json', plan.content_json ?? '{}', '```', '');
+    if ((type === 'script_loom' || type === 'pitch_r2' || type === 'proposition') && plan) out.push("## Mini plan d'action validé", '```json', plan.content_json ?? '{}', '```', '');
   }
-  if (type === 'plan' || type === 'pitch_r2') {
+  if (type === 'proposition') {
+    const cfg = await proposalSettings(db);
+    const pitch = st.validated('pitch_r2');
+    if (pitch) out.push('## Pitch R2 validé', '```json', pitch.content_json ?? '{}', '```', '');
+    out.push('## Modèle de la proposition (fixe : tu ne rédiges que les champs SITUATION, OBJECTIFS, DEJA_ESSAYE, PLAN, CAS_CLIENT, PROCHAINES_ETAPES)', '```markdown', cfg.template.trim(), '```', '');
+    out.push(`## Offre (insérée par le code, à ne jamais réécrire ni commenter) : mise en place ${cfg.offer.setup} ; ${cfg.offer.success} ${cfg.offer.condition}.`, '');
+  }
+  if (type === 'plan' || type === 'pitch_r2' || type === 'proposition') {
     const cases = await all<CaseStudyRow>(db, 'SELECT * FROM case_studies ORDER BY sort, client');
     out.push('## Cas clients disponibles (uniquement ceux-ci, avec leurs chiffres officiels ; une case vide reste vide)');
     for (const cs of cases) out.push(`- id \`${cs.id}\` — ${cs.client}${cs.target ? ` · cible / verticale (les personnes visées par les publicités) : ${cs.target}` : ''} · chiffres officiels : ${cs.figures?.trim() || '(non renseignés)'}`);
@@ -765,11 +832,58 @@ function parseDeposit(type: ProspectDocType, raw: unknown) {
     plan: ['verticale', 'angles', 'actionsSansAgence'],
     script_loom: ['passages', 'messageEmail', 'messageSms'],
     pitch_r2: ['recap', 'plan', 'objections', 'questionCloture', 'pointsACreuser'],
+    proposition: ['sections'],
   };
   const missing = required[type].filter((k) => !(k in (obj as object)));
   if (missing.length) throw new HttpError(400, `JSON incomplet : il manque ${missing.join(', ')}.`);
   return obj as Record<string, unknown>;
 }
+
+// ─── Google Doc de la proposition (décision 0034) : routes dédiées, déclarées avant les routes génériques ───
+async function gdocDoc(c: Context<{ Bindings: Bindings }>) {
+  const st = await load(c.env.DB, c.req.param('clientId')!);
+  const doc = st.validated('proposition');
+  if (!doc || doc.gdoc_status !== 'demande') throw new HttpError(409, 'Aucun Google Doc demandé pour ce prospect.');
+  return { st, doc };
+}
+robot.get(`/clients/${PR_CLIENT}/delivery/pr~gdoc/brief`, async (c) => {
+  const { st, doc } = await gdocDoc(c);
+  const cfg = await proposalSettings(c.env.DB);
+  const markdown = String(parseJson<{ markdown?: string }>(doc.content_json, {}).markdown ?? '');
+  const title = `Proposition commerciale — ${st.p.software || st.p.name} — ${parisDay()}`;
+  const html = proposalHtml(markdown, title);
+  return c.json({
+    masterPrompt: [
+      '# Créer le Google Doc de la proposition commerciale',
+      "Seule écriture autorisée pour cet élément : créer UN Google Doc dans le dossier indiqué. Ne modifie ni ne supprime aucun fichier existant, ne partage rien.",
+      `1. Outil Google Drive « create_file » : title = « ${title} », parentId = « ${cfg.folderId} », contentMimeType = « text/html », textContent = le champ « html » de cette réponse, tel quel (Drive le convertit en Google Doc).`,
+      '2. Dépose le lien du document créé (https://docs.google.com/document/d/<id>/edit) : PUT sur la même adresse que le delivery, avec {"contentMd": "<lien>"}.',
+      '3. Échec (dossier introuvable, droits, erreur Drive) : POST …/error avec le message exact.',
+    ].join('\n'),
+    brief: `Prospect : ${st.p.name}. Titre : ${title}. Dossier : ${cfg.folderId}. Version validée : v${doc.version}.`,
+    title, folderId: cfg.folderId, html,
+  });
+});
+robot.put(`/clients/${PR_CLIENT}/delivery/pr~gdoc`, async (c) => {
+  const { st, doc } = await gdocDoc(c);
+  const body = await c.req.json().catch(() => null) as { contentMd?: unknown; url?: unknown } | null;
+  const raw = String(body?.url ?? body?.contentMd ?? '').trim();
+  const id = raw.match(/docs\.google\.com\/document\/d\/([A-Za-z0-9_-]{10,})/)?.[1];
+  if (!id) throw new HttpError(400, 'Lien de Google Doc invalide (https://docs.google.com/document/d/…).');
+  const now = nowIso();
+  await c.env.DB.prepare(`UPDATE prospect_documents SET gdoc_status = 'cree', gdoc_url = ?1, gdoc_error = NULL, updated_at = ?2 WHERE id = ?3`)
+    .bind(`https://docs.google.com/document/d/${id}/edit`, now, doc.id).run();
+  await audit(c.env.DB, { clientId: null, ...ROBOT_ACTOR, action: 'prospect_proposition_gdoc_cree', objectType: 'prospect', objectId: st.p.id, after: { id } });
+  return c.json({ ok: true });
+});
+robot.post(`/clients/${PR_CLIENT}/delivery/pr~gdoc/error`, async (c) => {
+  const { st, doc } = await gdocDoc(c);
+  const body = await c.req.json().catch(() => null) as { message?: unknown } | null;
+  const message = typeof body?.message === 'string' ? body.message.trim().slice(0, 1000) : 'Échec sans message.';
+  await c.env.DB.prepare(`UPDATE prospect_documents SET gdoc_status = 'erreur', gdoc_error = ?1, updated_at = ?2 WHERE id = ?3`).bind(message, nowIso(), doc.id).run();
+  await audit(c.env.DB, { clientId: null, ...ROBOT_ACTOR, action: 'prospect_proposition_gdoc_echec', objectType: 'prospect', objectId: st.p.id, after: { message } });
+  return c.json({ ok: true });
+});
 
 robot.get(`/clients/${PR_CLIENT}/delivery/${PR_STEP}/brief`, async (c) => {
   const { st, type, doc } = await robotDoc(c);
@@ -781,6 +895,10 @@ robot.put(`/clients/${PR_CLIENT}/delivery/${PR_STEP}`, async (c) => {
   const { st, type, doc } = await robotDoc(c);
   const body = await c.req.json().catch(() => null) as { contentMd?: unknown } | null;
   const content = parseDeposit(type, body?.contentMd);
+  if (type === 'proposition') {
+    if (!content.sections || typeof content.sections !== 'object') throw new HttpError(400, 'JSON invalide : « sections » doit être un objet.');
+    content.markdown = proposalMarkdown(st, await proposalSettings(db), content.sections as Record<string, unknown>);
+  }
   const now = nowIso();
   const stmts: D1PreparedStatement[] = [
     db.prepare(`UPDATE prospect_documents SET content_json = ?1, status = 'brouillon', model = 'claude (tâche planifiée)', generated_at = ?2, last_error = NULL, updated_at = ?2 WHERE id = ?3`)
@@ -842,9 +960,16 @@ QUEUE_EXTENSIONS.push(async (env) => {
   const rows = await all<{ prospect_id: string; name: string; type: ProspectDocType; created_at: string; instruction: string | null }>(env.DB,
     `SELECT d.prospect_id, p.name, d.type, d.created_at, d.instruction FROM prospect_documents d JOIN prospects p ON p.id = d.prospect_id
      WHERE d.status = 'en_file' ORDER BY d.created_at`);
-  return rows.map((r) => ({
+  const gdocs = await all<{ prospect_id: string; name: string; gdoc_requested_at: string }>(env.DB,
+    `SELECT d.prospect_id, p.name, d.gdoc_requested_at FROM prospect_documents d JOIN prospects p ON p.id = d.prospect_id
+     WHERE d.gdoc_status = 'demande' AND d.status = 'valide' ORDER BY d.gdoc_requested_at`);
+  return [...gdocs.map((r) => ({
+    clientId: r.prospect_id, clientName: `Prospect — ${r.name}`, step: 'pr~gdoc', label: 'Google Doc de la proposition commerciale (prospect)',
+    vertical: null, queuedAt: r.gdoc_requested_at,
+    instruction: "Module Prospects : le « masterPrompt » du brief décrit la seule action à faire, créer le Google Doc de la proposition dans le dossier indiqué ; dépose son lien dans contentMd.",
+  })), ...rows.map((r) => ({
     clientId: r.prospect_id, clientName: `Prospect — ${r.name}`, step: `pr~${r.type}`, label: `${PROSPECT_DOC_LABEL[r.type]} (prospect)`,
     vertical: null, queuedAt: r.created_at,
     instruction: `Module Prospects : le « masterPrompt » du brief est le prompt de ce document ; rends uniquement le bloc JSON demandé dans contentMd.${r.instruction ? ` Consigne de Romain : ${r.instruction}` : ''}`,
-  }));
+  }))];
 });

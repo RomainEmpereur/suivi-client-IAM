@@ -8,6 +8,7 @@ import { ApiError, api, useApi } from '../api.ts';
 import { navigate } from '../router.ts';
 import { useSession } from '../session.ts';
 import { AgencyNote, EmptyState, ErrorBox, KpiCard, Loading, PageHead, Pill } from '../components/ui.tsx';
+import { renderMarkdown } from '../markdown.ts';
 
 /**
  * Module Prospects (section 29, décision 0027) : du R1 au R2, vue agence uniquement.
@@ -23,6 +24,7 @@ interface ListData { items: Item[]; upcoming: Upcoming | null; kpis: { r1Held30:
 interface Doc {
   id: string; type: ProspectDocType; version: number; status: 'en_file' | 'brouillon' | 'valide' | 'erreur'; content: any; instruction: string | null;
   generatedAt: string | null; validatedAt: string | null; editedByHand: boolean; lastError: string | null; verbatims: { quote: string; found: boolean }[]; verbatimsMissing: number;
+  gdoc: { status: 'demande' | 'cree' | 'erreur' | null; url: string | null; error: string | null; requestedAt: string | null } | null;
 }
 interface Call { type: 'r1' | 'r2'; scheduledAt: string | null; status: string; templateVersion: number | null; notes: Record<string, any>; transcript: string | null; recordingUrl: string | null }
 interface Full {
@@ -634,6 +636,7 @@ function StepR2({ data, reload }: { data: Full; reload: () => void }) {
         <div><button class="ghost-btn" onClick={() => save({ offerText: offer.text, offerPrice: offer.price })}>Enregistrer l'offre</button></div>
       </div>
       <DocPanel data={data} type="pitch_r2" reload={reload} />
+      <ProposalPanel data={data} reload={reload} />
       <div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
         <label class="field">Issue
           <select value={out.outcome} onChange={(e) => setOut({ ...out, outcome: (e.target as HTMLSelectElement).value })}><option value="signe">Signé</option><option value="perdu">Perdu</option><option value="a_relancer">À relancer</option></select>
@@ -657,6 +660,65 @@ function StepR2({ data, reload }: { data: Full; reload: () => void }) {
         <span class="small muted">À la signature, créez le client à la main (fiche client) : rien du R1 n'est copié dans son onboarding.</span>
       </div>
     </div>
+  );
+}
+
+/** Proposition commerciale (décision 0034) : rédigée par Claude dans le modèle de l'agence, prix insérés par le code, puis Google Doc à télécharger en PDF. */
+function ProposalPanel({ data, reload }: { data: Full; reload: () => void }) {
+  const d = data.docs.proposition;
+  const doc = d.latest && d.latest.status === 'brouillon' ? d.latest : d.validated ?? (d.latest?.status === 'valide' ? d.latest : null);
+  const [edit, setEdit] = useState(false);
+  const [md, setMd] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const markdown: string = doc?.content?.markdown ?? '';
+  const todo = markdown.includes('[à compléter]');
+  const gdoc = d.validated?.gdoc ?? null;
+  const pdf = gdoc?.url ? gdoc.url.replace(/\/edit.*$/, '/export?format=pdf') : null;
+  async function call(path: string, init: RequestInit) {
+    setErr(null);
+    try { await api(path, init); setEdit(false); reload(); } catch (x) { setErr((x as ApiError).message); }
+  }
+  const patch = (body: Record<string, unknown>) => call(`/agence/prospects/${data.prospect.id}/documents/proposition`, { method: 'PATCH', body: JSON.stringify(body) });
+  return (
+    <section class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <h3 style="margin:0">Proposition commerciale</h3>
+        {doc && <Pill kind={doc.status === 'valide' ? 'ok' : 'surveiller'}>{doc.status === 'valide' ? `Validée · v${doc.version}` : `Brouillon · v${doc.version}`}</Pill>}
+        {doc?.editedByHand && <span class="small muted">modifiée à la main</span>}
+        <span style="margin-left:auto"><GenerateButton data={data} type="proposition" reload={reload} /></span>
+      </div>
+      <p class="small muted" style="margin:0">Votre modèle (Prospects → Réglages), adapté au prospect par Claude à partir de l'analyse et du plan validés. Les prix viennent des réglages, jamais de Claude.</p>
+      {d.latest?.status === 'erreur' && <p class="small" style="color:var(--alert);margin:0">Échec de la rédaction : {d.latest.lastError}</p>}
+      {todo && <p class="small" style="color:var(--alert);margin:0"><strong>Il reste des « [à compléter] »</strong> : complétez-les (Modifier) avant de valider.</p>}
+      {doc && (edit
+        ? <textarea rows={28} style="font-family:var(--font-mono);font-size:12px" value={md} onInput={(e) => setMd((e.target as HTMLTextAreaElement).value)} />
+        : <article class="md-content" style="border:1px solid var(--border);border-radius:8px;padding:16px 20px" dangerouslySetInnerHTML={{ __html: renderMarkdown(markdown) }} />)}
+      {doc && doc.status === 'brouillon' && (
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          {!edit && <button class="btn" disabled={todo} title={todo ? 'Il reste des « [à compléter] »' : undefined} onClick={() => patch({ status: 'valide' })}>Valider</button>}
+          {!edit && <button class="ghost-btn" onClick={() => { setMd(markdown); setEdit(true); }}>Modifier</button>}
+          {edit && <><button class="btn" onClick={() => patch({ content: { ...doc.content, markdown: md } })}>Enregistrer</button><button class="ghost-btn" onClick={() => setEdit(false)}>Annuler</button></>}
+        </div>
+      )}
+      {d.validated && (
+        <div class="card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <strong>Google Doc</strong>
+          {gdoc?.status === 'cree' && gdoc.url && <>
+            <a class="btn" href={gdoc.url} target="_blank" rel="noopener noreferrer">Ouvrir le Google Doc</a>
+            {pdf && <a class="ghost-btn" href={pdf} target="_blank" rel="noopener noreferrer">Télécharger en PDF</a>}
+          </>}
+          {gdoc?.status === 'demande' && <Pill kind="info">Demandé : créé au prochain passage de la tâche (entre 7 h et 21 h)</Pill>}
+          {gdoc?.status === 'erreur' && <span class="small" style="color:var(--alert)">Échec : {gdoc.error}</span>}
+          {gdoc?.status !== 'demande' && (
+            <button class={gdoc?.status === 'cree' ? 'ghost-btn' : 'btn'} onClick={() => call(`/agence/prospects/${data.prospect.id}/documents/proposition/gdoc`, { method: 'POST', body: '{}' })}>
+              {gdoc?.status === 'cree' ? 'Recréer depuis la version validée' : 'Créer le Google Doc'}
+            </button>
+          )}
+          {d.latest && d.validated && d.latest.version !== d.validated.version && <span class="small muted">Le Google Doc reprend la version validée (v{d.validated.version}).</span>}
+        </div>
+      )}
+      {err && <span class="small" style="color:var(--alert)">{err}</span>}
+    </section>
   );
 }
 
@@ -701,7 +763,8 @@ function CallMode({ data, step, reload }: { data: Full; step: 1 | 4; reload: () 
 
 // ─── Réglages ─────────────────────────────────────────────────────────────────
 
-interface Settings { template: { version: number; blocks: TemplateBlock[] }; templateVersions: { version: number; created_at: string }[]; ghlClientId: string | null; clients: { id: string; name: string }[]; caseStudies: { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null }[]; margin: number; tunnelContext: string; tunnelContextIsDefault: boolean }
+interface Settings { template: { version: number; blocks: TemplateBlock[] }; templateVersions: { version: number; created_at: string }[]; ghlClientId: string | null; clients: { id: string; name: string }[]; caseStudies: { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null }[]; margin: number; tunnelContext: string; tunnelContextIsDefault: boolean;
+  proposal: { template: string; templateIsDefault: boolean; offer: { setup: string; success: string; condition: string }; folderId: string | null } }
 
 export function ProspectSettingsScreen() {
   const { data, error, reload } = useApi<Settings>('/agence/prospects-reglages', []);
@@ -715,6 +778,9 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
   const [cases, setCases] = useState(data.caseStudies);
   const [blocks, setBlocks] = useState<TemplateBlock[]>(data.template.blocks);
   const [tunnel, setTunnel] = useState(data.tunnelContext);
+  const [ptpl, setPtpl] = useState(data.proposal.template);
+  const [poffer, setPoffer] = useState(data.proposal.offer);
+  const [pfolder, setPfolder] = useState(data.proposal.folderId ?? '');
   const [msg, setMsg] = useState<string | null>(null);
   async function put(body: Record<string, unknown>, ok: string) {
     setMsg(null);
@@ -737,6 +803,28 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
       <section class="card section" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
         <label class="field">Marge acceptable (%) — coût max. d'un RDV = ticket × durée × marge × closing<input inputMode="decimal" value={margin} onInput={(e) => setMargin((e.target as HTMLInputElement).value)} /></label>
         <button class="ghost-btn" onClick={() => put({ margin: Number(margin.replace(',', '.')) / 100 }, 'Marge enregistrée.')}>Enregistrer</button>
+      </section>
+      <section class="card section" style="display:flex;flex-direction:column;gap:10px">
+        <h3 style="margin:0">Proposition commerciale</h3>
+        <p class="small muted" style="margin:0">
+          Le modèle est repris tel quel ; Claude ne remplit que {'{{SITUATION}}'}, {'{{OBJECTIFS}}'}, {'{{DEJA_ESSAYE}}'}, {'{{PLAN}}'}, {'{{CAS_CLIENT}}'} et {'{{PROCHAINES_ETAPES}}'}.
+          Le code remplit {'{{ENTREPRISE}}'}, {'{{PROSPECT}}'}, {'{{DATE}}'} et les prix : {'{{PRIX_MISE_EN_PLACE}}'}, {'{{PRIX_RESULTAT}}'}, {'{{CONDITION_RESULTAT}}'}.{data.proposal.templateIsDefault ? ' Modèle par défaut, à ajuster.' : ''}
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px">
+          <label class="field">Mise en place<input value={poffer.setup} onInput={(e) => setPoffer({ ...poffer, setup: (e.target as HTMLInputElement).value })} /></label>
+          <label class="field">Au résultat<input value={poffer.success} onInput={(e) => setPoffer({ ...poffer, success: (e.target as HTMLInputElement).value })} /></label>
+          <label class="field" style="grid-column:span 2">Condition du paiement au résultat<input value={poffer.condition} onInput={(e) => setPoffer({ ...poffer, condition: (e.target as HTMLInputElement).value })} /></label>
+        </div>
+        <div><button class="ghost-btn" onClick={() => put({ proposalOffer: poffer }, 'Offre enregistrée.')}>Enregistrer l'offre</button></div>
+        <label class="field">Modèle (markdown)<textarea rows={18} style="font-family:var(--font-mono);font-size:12px" value={ptpl} onInput={(e) => setPtpl((e.target as HTMLTextAreaElement).value)} /></label>
+        <div style="display:flex;gap:8px">
+          {ptpl !== data.proposal.template && <button class="btn" onClick={() => put({ proposalTemplate: ptpl }, 'Modèle enregistré.')}>Enregistrer le modèle</button>}
+          {!data.proposal.templateIsDefault && <button class="ghost-btn" onClick={() => put({ proposalTemplate: null }, 'Modèle par défaut rétabli.')}>Revenir au modèle par défaut</button>}
+        </div>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+          <label class="field" style="flex:1;min-width:260px">Dossier Google Drive des propositions (lien ou identifiant)<input value={pfolder} onInput={(e) => setPfolder((e.target as HTMLInputElement).value)} placeholder="https://drive.google.com/drive/folders/…" /></label>
+          <button class="ghost-btn" onClick={() => put({ driveFolder: pfolder }, 'Dossier Drive enregistré.')}>Enregistrer</button>
+        </div>
       </section>
       <section class="card section" style="display:flex;flex-direction:column;gap:10px">
         <h3 style="margin:0">Contexte du tunnel de vente des SaaS</h3>

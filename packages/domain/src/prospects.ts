@@ -11,10 +11,10 @@ export const PROSPECT_STAGE_LABEL: Record<ProspectStage, string> = {
   r2_planifie: 'R2 planifié', signe: 'Signé', perdu: 'Perdu', a_relancer: 'À relancer',
 };
 export const PROSPECT_VERDICT_LABEL: Record<string, string> = { qualifie: 'Qualifié', a_creuser: 'À creuser', disqualifie: 'Disqualifié' };
-export const PROSPECT_DOC_TYPES = ['analyse', 'recherche', 'plan', 'script_loom', 'pitch_r2'] as const;
+export const PROSPECT_DOC_TYPES = ['analyse', 'recherche', 'plan', 'script_loom', 'pitch_r2', 'proposition'] as const;
 export type ProspectDocType = (typeof PROSPECT_DOC_TYPES)[number];
 export const PROSPECT_DOC_LABEL: Record<ProspectDocType, string> = {
-  analyse: 'Analyse post-R1', recherche: 'Recherche marché', plan: "Mini plan d'action", script_loom: 'Script du Loom', pitch_r2: 'Pitch R2',
+  analyse: 'Analyse post-R1', recherche: 'Recherche marché', plan: "Mini plan d'action", script_loom: 'Script du Loom', pitch_r2: 'Pitch R2', proposition: 'Proposition commerciale',
 };
 
 /** Chiffres du prospect. Le taux de closing est stocké en ratio (0,25 = 25 %). */
@@ -348,3 +348,116 @@ export const DEFAULT_TUNNEL_CONTEXT = `Ce qu'Obsidian Partners installe pour un 
 - Le pilotage se fait sur un seul chiffre : le coût par rendez-vous, comparé au coût maximum qu'un rendez-vous peut coûter (calculé à partir du ticket, de la durée de vie, de la marge et du taux de closing).
 - Lancement prudent : 20 à 30 € par jour pendant deux à trois semaines (700 à 1 000 € le premier mois) pour laisser Meta apprendre (une cinquantaine de leads) et mesurer le coût par rendez-vous, puis augmentation par paliers seulement quand ce coût tient.
 - Un espace client suit tout : chiffres, rendez-vous, livrables.`;
+
+// ─── Proposition commerciale (décision 0034) ──────────────────────────────────
+
+/** Parties de la proposition rédigées par Claude, à partir de l'analyse et du plan validés. */
+export const PROPOSAL_AI_FIELDS = ['SITUATION', 'OBJECTIFS', 'DEJA_ESSAYE', 'PLAN', 'CAS_CLIENT', 'PROCHAINES_ETAPES'] as const;
+export type ProposalAiField = (typeof PROPOSAL_AI_FIELDS)[number];
+/** Parties remplies par le code : identité, date et prix (jamais par Claude). */
+export const PROPOSAL_CODE_FIELDS = ['ENTREPRISE', 'PROSPECT', 'DATE', 'PRIX_MISE_EN_PLACE', 'PRIX_RESULTAT', 'CONDITION_RESULTAT'] as const;
+
+export interface ProposalOffer { setup: string; success: string; condition: string }
+export const DEFAULT_PROPOSAL_OFFER: ProposalOffer = {
+  setup: '1 500 €',
+  success: '1 500 €',
+  condition: 'une fois 30 démos ajoutées à votre agenda avec votre avatar client',
+};
+
+export const DEFAULT_PROPOSAL_TEMPLATE = `# Proposition commerciale — {{ENTREPRISE}}
+
+**Préparée pour** {{PROSPECT}} · **le** {{DATE}} · **par** Romain Auroux, Obsidian Partners
+
+## 1. Où vous en êtes aujourd'hui
+
+{{SITUATION}}
+
+## 2. Ce que vous voulez atteindre
+
+{{OBJECTIFS}}
+
+## 3. Ce que vous avez déjà essayé
+
+{{DEJA_ESSAYE}}
+
+## 4. Ce que nous construisons pour vous
+
+Un système d'acquisition complet, construit dans vos propres comptes, pour remplir votre agenda de démos avec votre client idéal :
+
+- **L'offre** : votre offre d'entrée, formulée pour des prospects qui ne vous connaissent pas encore.
+- **La page et la vidéo de présentation** : une page de réservation et une vidéo de 6 à 8 minutes, tournée par vous à partir de notre script.
+- **Les publicités Meta** : les scripts, les visuels et la mise en ligne des campagnes.
+- **Les relances** : les séquences email et SMS qui amènent chaque inscrit jusqu'à la démo.
+- **Le CRM et l'agenda** : GoHighLevel paramétré (pipeline, agenda, rappels) pour que chaque démo soit suivie.
+- **Le pilotage** : un suivi chaque semaine dans votre espace client, avec le coût par démo et nos recommandations.
+
+{{PLAN}}
+
+## 5. Un cas proche du vôtre
+
+{{CAS_CLIENT}}
+
+## 6. L'investissement
+
+- **Mise en place : {{PRIX_MISE_EN_PLACE}}**, à la signature.
+- **{{PRIX_RESULTAT}}** {{CONDITION_RESULTAT}}.
+- Le budget publicitaire est réglé directement par vous à Meta ; il n'est pas compris dans ces montants.
+
+## 7. Ce qui vous appartient
+
+Les comptes publicitaires, le CRM, les pages, les vidéos et les publicités sont créés à votre nom et restent à vous, que nous continuions ensemble ou non.
+
+## 8. Prochaines étapes
+
+{{PROCHAINES_ETAPES}}
+
+---
+
+Romain Auroux · Obsidian Partners
+`;
+
+/** Remplace les {{CHAMPS}} du modèle ; un champ sans valeur devient « [à compléter] » (rien d'inventé). */
+export function renderProposal(template: string, values: Partial<Record<string, string | null | undefined>>): string {
+  return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, k: string) => {
+    const v = values[k];
+    return typeof v === 'string' && v.trim() ? v.trim() : '[à compléter]';
+  });
+}
+
+const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function inlineHtml(s: string) {
+  return escHtml(s)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+}
+
+/** Markdown simple (titres, paragraphes, listes, citations, gras, italique, liens, séparateur) → HTML, converti en Google Doc par Drive. */
+export function proposalHtml(markdown: string, title: string): string {
+  const out: string[] = [];
+  let list: 'ul' | 'ol' | null = null;
+  let para: string[] = [];
+  const flush = () => {
+    if (para.length) { out.push(`<p>${inlineHtml(para.join(' '))}</p>`); para = []; }
+    if (list) { out.push(`</${list}>`); list = null; }
+  };
+  for (const raw of markdown.split('\n')) {
+    const line = raw.trimEnd();
+    let m: RegExpMatchArray | null;
+    if (!line.trim()) { flush(); continue; }
+    if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { flush(); out.push(`<h${m[1].length}>${inlineHtml(m[2])}</h${m[1].length}>`); continue; }
+    if (/^-{3,}$/.test(line.trim())) { flush(); out.push('<hr>'); continue; }
+    if ((m = line.match(/^>\s?(.*)$/))) { flush(); out.push(`<blockquote>${inlineHtml(m[1])}</blockquote>`); continue; }
+    if ((m = line.match(/^\s*[-*]\s+(.*)$/)) || (m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
+      const kind = /^\s*\d/.test(line) ? 'ol' : 'ul';
+      if (para.length) { out.push(`<p>${inlineHtml(para.join(' '))}</p>`); para = []; }
+      if (list !== kind) { if (list) out.push(`</${list}>`); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${inlineHtml(m[1])}</li>`);
+      continue;
+    }
+    if (list) { out.push(`</${list}>`); list = null; }
+    para.push(line.trim());
+  }
+  flush();
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escHtml(title)}</title></head><body>${out.join('\n')}</body></html>`;
+}
