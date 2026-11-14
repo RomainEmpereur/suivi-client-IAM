@@ -152,7 +152,7 @@ describe('Prospects : du R1 au R2', () => {
     await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide', confirmMissing: true } });
     expect((await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(409);
     await call(`/agence/prospects/${id}`, { as: AGENCE, method: 'PATCH', body: { forceContinue: true } });
-    expect((await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
+    expect((await call(`/agence/prospects/${id}/documents/recherche/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
   });
 
   it('transcription collée : la trame vide est complétée (citation vérifiée), jamais ce que Romain a saisi ; vérification de la fiche', async () => {
@@ -280,5 +280,54 @@ describe('Prospects : « Mettre à jour » l\'analyse depuis la fiche (décision
     expect(d.docs.analyse.latest.content.fiche.budgetPublicitaire).toBe('35 €/jour');
     expect(d.docs.analyse.validated.version).toBe(1);
     expect((await call(`/agence/prospects/${id}/documents/analyse/refresh`, { as: CLIENT_A, method: 'POST' })).status).toBe(403);
+  });
+});
+
+describe('Prospects : recherche marché par Claude, puis plan sur le tunnel des SaaS (décision 0032)', () => {
+  it('la recherche suit l\'analyse validée ; le plan exige une recherche validée (ou des notes) et reçoit recherche + contexte du tunnel ; annulation d\'une demande en file', async () => {
+    const { call } = boot();
+    const { id } = (await (await call('/agence/prospects', { as: AGENCE, method: 'POST', body: { name: 'Liroad', website: 'https://www.liroad.com' } })).json()) as any;
+    await call(`/agence/prospects/${id}/calls/r1`, { as: AGENCE, method: 'PATCH', body: { status: 'tenu', transcript: TRANSCRIPT } });
+    expect((await call(`/agence/prospects/${id}/documents/recherche/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(409); // analyse d'abord
+    await call(`/agence/prospects/${id}/documents/analyse/generate`, { as: AGENCE, method: 'POST', body: {} });
+    await deposit(call, id, 'analyse', ANALYSE);
+    await call(`/agence/prospects/${id}/documents/analyse`, { as: AGENCE, method: 'PATCH', body: { status: 'valide', confirmMissing: true } });
+    const planBlocked = await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} });
+    expect(planBlocked.status).toBe(409);
+    expect(((await planBlocked.json()) as any).error).toContain('recherche marché');
+
+    // Demande en file, puis annulée.
+    expect((await call(`/agence/prospects/${id}/documents/recherche/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
+    expect((await call(`/agence/prospects/${id}/documents/recherche/cancel`, { as: AGENCE, method: 'POST' })).status).toBe(200);
+    let d = (await (await call(`/agence/prospects/${id}`, { as: AGENCE })).json()) as any;
+    expect(d.docs.recherche.latest).toBeNull();
+    expect((await call(`/agence/prospects/${id}/documents/recherche/cancel`, { as: AGENCE, method: 'POST' })).status).toBe(409);
+
+    // Rédaction par la file robot.
+    await call(`/agence/prospects/${id}/documents/recherche/generate`, { as: AGENCE, method: 'POST', body: {} });
+    const queue = (await (await call('/robot/delivery/queue', { headers: robotHeaders })).json()) as any;
+    expect(queue.items.some((x: any) => x.clientId === id && x.step === 'pr~recherche')).toBe(true);
+    const brief = (await (await call(`/robot/clients/${id}/delivery/pr~recherche/brief`, { headers: robotHeaders })).json()) as any;
+    expect(brief.masterPrompt).toContain('ads_library_search');
+    expect(brief.brief).toContain('## Analyse post-R1 validée');
+    expect(brief.brief).toContain('https://www.liroad.com');
+    expect((await deposit(call, id, 'recherche', { site: {} })).status).toBe(400); // clés requises
+    const RECHERCHE = { site: { url: 'https://www.liroad.com', promesse: 'Mémoire IA' }, concurrents: [{ nom: 'Metaview', url: 'https://metaview.ai' }],
+      langageCible: [{ citation: 'chasing feedback', source: 'https://g2.com' }], stats: [], espaceLibre: 'la relance', synthese: 'Marché anglophone, Metaview en preuve sociale.' };
+    expect((await deposit(call, id, 'recherche', RECHERCHE)).status).toBe(200);
+    expect((await call(`/agence/prospects/${id}/documents/recherche`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } })).status).toBe(200);
+
+    // Contexte du tunnel : réglage de l'agence, joint au brief du plan avec la recherche validée.
+    await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { tunnelContext: 'Notre tunnel : pub vidéo, formulaire, VSL, calendrier.' } });
+    expect((await call(`/agence/prospects/${id}/documents/plan/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
+    const planBrief = (await (await call(`/robot/clients/${id}/delivery/pr~plan/brief`, { headers: robotHeaders })).json()) as any;
+    expect(planBrief.brief).toContain('## Recherche marché validée');
+    expect(planBrief.brief).toContain('Metaview en preuve sociale');
+    expect(planBrief.brief).toContain('Notre tunnel : pub vidéo, formulaire, VSL, calendrier.');
+    expect(planBrief.masterPrompt).toContain('tunnel de vente');
+    const settings = (await (await call('/agence/prospects-reglages', { as: AGENCE })).json()) as any;
+    expect(settings).toMatchObject({ tunnelContextIsDefault: false });
+    await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { tunnelContext: null } });
+    expect(((await (await call('/agence/prospects-reglages', { as: AGENCE })).json()) as any).tunnelContextIsDefault).toBe(true);
   });
 });

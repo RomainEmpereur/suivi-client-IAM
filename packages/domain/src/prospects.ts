@@ -11,10 +11,10 @@ export const PROSPECT_STAGE_LABEL: Record<ProspectStage, string> = {
   r2_planifie: 'R2 planifié', signe: 'Signé', perdu: 'Perdu', a_relancer: 'À relancer',
 };
 export const PROSPECT_VERDICT_LABEL: Record<string, string> = { qualifie: 'Qualifié', a_creuser: 'À creuser', disqualifie: 'Disqualifié' };
-export const PROSPECT_DOC_TYPES = ['analyse', 'plan', 'script_loom', 'pitch_r2'] as const;
+export const PROSPECT_DOC_TYPES = ['analyse', 'recherche', 'plan', 'script_loom', 'pitch_r2'] as const;
 export type ProspectDocType = (typeof PROSPECT_DOC_TYPES)[number];
 export const PROSPECT_DOC_LABEL: Record<ProspectDocType, string> = {
-  analyse: 'Analyse post-R1', plan: "Mini plan d'action", script_loom: 'Script du Loom', pitch_r2: 'Pitch R2',
+  analyse: 'Analyse post-R1', recherche: 'Recherche marché', plan: "Mini plan d'action", script_loom: 'Script du Loom', pitch_r2: 'Pitch R2',
 };
 
 /** Chiffres du prospect. Le taux de closing est stocké en ratio (0,25 = 25 %). */
@@ -331,3 +331,20 @@ export function refreshAnalyse(
   }
   return { content: out, changed };
 }
+
+// ─── Contexte du tunnel de vente des SaaS (décision 0032) ─────────────────────
+
+/**
+ * Ce qu'Obsidian Partners installe chez ses clients SaaS, joint aux briefs du plan, du script du Loom et du pitch R2.
+ * Valeur par défaut, modifiable dans les réglages Prospects (clé `prospects_contexte_tunnel`). Aucun prix.
+ */
+export const DEFAULT_TUNNEL_CONTEXT = `Ce qu'Obsidian Partners installe pour un éditeur de SaaS B2B (le plan applique cette méthode au marché du prospect) :
+- Une seule verticale à la fois, choisie sur trois critères : des clients contents existants, le ticket le plus élevé, la douleur la plus forte.
+- Une offre de trafic froid écrite pour cette verticale : l'avatar, son problème, le mécanisme nommé du logiciel, la promesse et la preuve.
+- Des publicités vidéo Meta de 45 à 60 secondes qui parlent à l'avatar dès la première phrase (« Si vous dirigez… »), trois angles testés en même temps.
+- Un formulaire instantané Meta de trois questions qui filtre les curieux et donne accès à une présentation vidéo.
+- Une page avec la vidéo de présentation (VSL) et le calendrier de réservation de la démo, puis des séquences email et un rappel rapide de ceux qui n'ont pas réservé.
+- La démo est faite par l'équipe du client ; tout est construit sur ses comptes (publicités, pages, CRM), il en reste propriétaire.
+- Le pilotage se fait sur un seul chiffre : le coût par rendez-vous, comparé au coût maximum qu'un rendez-vous peut coûter (calculé à partir du ticket, de la durée de vie, de la marge et du taux de closing).
+- Lancement prudent : 20 à 30 € par jour pendant deux à trois semaines (700 à 1 000 € le premier mois) pour laisser Meta apprendre (une cinquantaine de leads) et mesurer le coût par rendez-vous, puis augmentation par paliers seulement quand ce coût tient.
+- Un espace client suit tout : chiffres, rendez-vous, livrables.`;

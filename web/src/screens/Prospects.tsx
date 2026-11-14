@@ -435,10 +435,20 @@ function GenerateButton({ data, type, reload, label, before }: { data: Full; typ
     try { if (before) await before(); await api(`/agence/prospects/${data.prospect.id}/documents/${type}/generate`, { method: 'POST', body: JSON.stringify({ instruction: instr, confirm: confirmHand }) }); setOpen(false); setInstr(''); reload(); }
     catch (x) { setErr((x as ApiError).message); }
   }
-  if (queued) return <Pill kind="info">En rédaction : Claude la rédige au prochain passage (entre 7 h et 21 h)</Pill>;
+  async function cancel() {
+    setErr(null);
+    try { await api(`/agence/prospects/${data.prospect.id}/documents/${type}/cancel`, { method: 'POST' }); reload(); } catch (x) { setErr((x as ApiError).message); }
+  }
+  if (queued) return (
+    <span style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <Pill kind="info">En rédaction : Claude la rédige au prochain passage (entre 7 h et 21 h)</Pill>
+      <button class="ghost-btn small" title="Retire la demande de la file ; la version validée n'est pas touchée" onClick={cancel}>Annuler</button>
+      {err && <span class="small" style="color:var(--alert)">{err}</span>}
+    </span>
+  );
   return (
     <span style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center">
-      {!open && <button class="btn" disabled={Boolean(d.blocker) && !before} title={d.blocker ?? undefined} onClick={() => (d.latest ? setOpen(true) : go())}>{label ?? (d.latest ? 'Faire réécrire' : `Rédiger : ${PROSPECT_DOC_LABEL[type].toLowerCase()}`)}{d.latest && !label ? '' : ''}</button>}
+      {!open && <button class="btn" disabled={Boolean(d.blocker) && !before} title={d.blocker ?? undefined} onClick={() => (d.latest ? setOpen(true) : go())}>{label ?? (d.latest ? 'Faire réécrire' : type === 'recherche' ? 'Générer la recherche marché' : `Rédiger : ${PROSPECT_DOC_LABEL[type].toLowerCase()}`)}{d.latest && !label ? '' : ''}</button>}
       {open && <><input style="min-width:280px" placeholder="Consigne (facultatif)" value={instr} onInput={(e) => setInstr((e.target as HTMLInputElement).value)} /><button class="btn" onClick={go}>Envoyer à Claude</button><button class="ghost-btn" onClick={() => setOpen(false)}>Annuler</button></>}
       {d.blocker && <span class="small muted">{d.blocker}</span>}
       {err && <span class="small" style="color:var(--alert)">{err}</span>}
@@ -459,6 +469,10 @@ const KEY_LABEL: Record<string, string> = {
   messageEmail: 'Email d\'accompagnement (à copier)', objet: 'Objet', corps: 'Corps', messageSms: 'SMS (à copier)', recap: 'Récap à relire', situation: 'Situation',
   plan: 'Le plan en trois points', reponse: 'Réponse', preuve: 'Preuve', questionCloture: 'Question de clôture', pointsACreuser: 'Trois points à creuser',
   ressourceAvantR2: 'Ressource à envoyer avant le R2',
+  site: 'Site du prospect', url: 'Lien', promesse: 'Promesse', preuves: 'Preuves', ton: 'Ton', verticalesServies: 'Verticales déjà servies',
+  concurrents: 'Concurrents et alternatives', nom: 'Nom', publicitesMeta: 'Publicités Meta', actives: 'Actives', formats: 'Formats',
+  plusAncienneActive: 'Plus ancienne encore active', liens: 'Liens', langageCible: 'Le langage de la cible', citation: 'Citation', source: 'Source',
+  stats: 'Statistiques sourcées', chiffre: 'Chiffre', espaceLibre: "L'espace libre", synthese: 'Synthèse', sourcesInaccessibles: 'Sources inaccessibles',
 };
 
 function JsonView({ v, missing, depth = 0 }: { v: any; missing: Set<string>; depth?: number }): any {
@@ -570,10 +584,15 @@ function StepPlan({ data, reload }: { data: Full; reload: () => void }) {
   const script = data.docs.script_loom.validated?.content ?? data.docs.script_loom.latest?.content;
   return (
     <div style="display:flex;flex-direction:column;gap:14px">
-      <div class="card" style="display:flex;flex-direction:column;gap:8px">
-        <label class="field">Recherche marché (collée par vous ; le plan s'en sert si elle est remplie)<textarea rows={4} value={research} onInput={(e) => setResearch((e.target as HTMLTextAreaElement).value)} /></label>
-        {research !== (p.marketResearch ?? '') && <div><button class="ghost-btn" onClick={() => save({ marketResearch: research })}>Enregistrer</button></div>}
-      </div>
+      <DocPanel data={data} type="recherche" reload={reload}>
+        <details>
+          <summary class="small muted" style="cursor:pointer">Vos notes ou compléments (facultatif) : Claude les prend en compte pour la recherche et le plan</summary>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+            <textarea rows={4} value={research} placeholder="Ex. concurrents à regarder en priorité, pays, liens utiles…" onInput={(e) => setResearch((e.target as HTMLTextAreaElement).value)} />
+            {research !== (p.marketResearch ?? '') && <div><button class="ghost-btn" onClick={() => save({ marketResearch: research })}>Enregistrer</button></div>}
+          </div>
+        </details>
+      </DocPanel>
       <DocPanel data={data} type="plan" reload={reload} />
       <DocPanel data={data} type="script_loom" reload={reload}>
         {script?.messageEmail && (
@@ -682,7 +701,7 @@ function CallMode({ data, step, reload }: { data: Full; step: 1 | 4; reload: () 
 
 // ─── Réglages ─────────────────────────────────────────────────────────────────
 
-interface Settings { template: { version: number; blocks: TemplateBlock[] }; templateVersions: { version: number; created_at: string }[]; ghlClientId: string | null; clients: { id: string; name: string }[]; caseStudies: { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null }[]; margin: number }
+interface Settings { template: { version: number; blocks: TemplateBlock[] }; templateVersions: { version: number; created_at: string }[]; ghlClientId: string | null; clients: { id: string; name: string }[]; caseStudies: { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null }[]; margin: number; tunnelContext: string; tunnelContextIsDefault: boolean }
 
 export function ProspectSettingsScreen() {
   const { data, error, reload } = useApi<Settings>('/agence/prospects-reglages', []);
@@ -695,6 +714,7 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
   const [margin, setMargin] = useState(String(Math.round(data.margin * 100)));
   const [cases, setCases] = useState(data.caseStudies);
   const [blocks, setBlocks] = useState<TemplateBlock[]>(data.template.blocks);
+  const [tunnel, setTunnel] = useState(data.tunnelContext);
   const [msg, setMsg] = useState<string | null>(null);
   async function put(body: Record<string, unknown>, ok: string) {
     setMsg(null);
@@ -717,6 +737,15 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
       <section class="card section" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
         <label class="field">Marge acceptable (%) — coût max. d'un RDV = ticket × durée × marge × closing<input inputMode="decimal" value={margin} onInput={(e) => setMargin((e.target as HTMLInputElement).value)} /></label>
         <button class="ghost-btn" onClick={() => put({ margin: Number(margin.replace(',', '.')) / 100 }, 'Marge enregistrée.')}>Enregistrer</button>
+      </section>
+      <section class="card section" style="display:flex;flex-direction:column;gap:10px">
+        <h3 style="margin:0">Contexte du tunnel de vente des SaaS</h3>
+        <p class="small muted" style="margin:0">Ce que vous installez chez vos clients SaaS : joint au brief du plan, du script du Loom et du pitch R2, pour que Claude applique votre méthode au marché du prospect.{data.tunnelContextIsDefault ? ' Texte par défaut, à ajuster.' : ''} Aucun prix.</p>
+        <textarea rows={12} value={tunnel} onInput={(e) => setTunnel((e.target as HTMLTextAreaElement).value)} />
+        <div style="display:flex;gap:8px">
+          {tunnel !== data.tunnelContext && <button class="btn" onClick={() => put({ tunnelContext: tunnel }, 'Contexte du tunnel enregistré.')}>Enregistrer</button>}
+          {!data.tunnelContextIsDefault && <button class="ghost-btn" onClick={() => put({ tunnelContext: null }, 'Texte par défaut rétabli.')}>Revenir au texte par défaut</button>}
+        </div>
       </section>
       <section class="card section" style="display:flex;flex-direction:column;gap:10px">
         <h3 style="margin:0">Cas clients cités en preuve</h3>

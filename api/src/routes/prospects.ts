@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import {
-  DEFAULT_MARGIN, DEFAULT_R1_TEMPLATE, PROSPECT_DOC_LABEL, PROSPECT_DOC_TYPES, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_PROMPTS,
+  DEFAULT_MARGIN, DEFAULT_R1_TEMPLATE, DEFAULT_TUNNEL_CONTEXT, PROSPECT_DOC_LABEL, PROSPECT_DOC_TYPES, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_PROMPTS,
   PROSPECT_STAGES, autofillFields, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks, refreshAnalyse,
   type Figures, type ProspectDocType, type ProspectFigure, type ProspectStage, type TemplateBlock,
 } from '@obsidian/domain';
@@ -83,6 +83,12 @@ async function margin(db: D1Database) {
   return Number.isFinite(n) && n > 0 && n <= 1 ? n : DEFAULT_MARGIN;
 }
 
+/** Contexte du tunnel de vente des SaaS (décision 0032) : réglage de l'agence, sinon le texte par défaut. */
+async function tunnelContext(db: D1Database) {
+  const r = await first<{ value: string | null }>(db, `SELECT value FROM agency_settings WHERE key = 'prospects_contexte_tunnel'`);
+  return r?.value?.trim() || DEFAULT_TUNNEL_CONTEXT;
+}
+
 /** Trame active (version 1 = trame par défaut, créée à la première lecture). */
 async function activeTemplate(db: D1Database): Promise<{ version: number; blocks: TemplateBlock[] }> {
   const r = await first<{ version: number; blocks_json: string }>(db, `SELECT version, blocks_json FROM call_templates WHERE type = 'r1' AND active = 1 ORDER BY version DESC LIMIT 1`);
@@ -150,7 +156,9 @@ function generationBlocker(st: Loaded, type: ProspectDocType): string | null {
   if (type === 'analyse') return st.r1?.transcript?.trim() || st.r1?.notes_json ? null : 'Collez la transcription du R1 (ou remplissez la trame) avant de lancer l\'analyse.';
   if (!st.validated('analyse')) return "Validez d'abord l'analyse post-R1.";
   if (disq) return 'Prospect disqualifié : seule la sortie courtoise est proposée (vous pouvez forcer la suite).';
-  if (type === 'plan') return null;
+  if (type === 'recherche') return null;
+  // Le plan s'appuie sur la recherche marché (décision 0032) : générée et validée, ou collée par Romain.
+  if (type === 'plan') return st.validated('recherche') || st.p.market_research?.trim() ? null : "Générez et validez d'abord la recherche marché (ou collez la vôtre).";
   if (!st.validated('plan')) return "Validez d'abord le mini plan d'action.";
   return null;
 }
@@ -468,6 +476,19 @@ prospects.post('/prospects/:id/documents/:type/generate', async (c) => {
   return c.json({ ok: true });
 });
 
+/** Retirer de la file une rédaction pas encore commencée (décision 0032). La version validée n'est pas touchée. */
+prospects.post('/prospects/:id/documents/:type/cancel', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user');
+  const type = docType(c.req.param('type'));
+  const st = await load(db, c.req.param('id'));
+  const doc = st.latest(type);
+  if (!doc || doc.status !== 'en_file') throw new HttpError(409, 'Aucune rédaction en file pour ce document.');
+  await db.prepare(`DELETE FROM prospect_documents WHERE id = ?1 AND status = 'en_file'`).bind(doc.id).run();
+  await audit(db, { clientId: null, actorId: user.id, actorEmail: user.email, action: 'prospect_generation_annulee', objectType: 'prospect', objectId: `${st.p.id}:${type}` });
+  return c.json({ ok: true });
+});
+
 /**
  * « Mettre à jour » l'analyse (décision 0031) : reprend la trame et les chiffres saisis depuis, sans passer par Claude.
  * Un brouillon est mis à jour sur place ; une version validée donne une nouvelle version en brouillon, à valider.
@@ -581,7 +602,9 @@ prospects.get('/prospects-reglages', async (c) => {
     all<{ version: number; created_at: string }>(db, `SELECT version, created_at FROM call_templates WHERE type = 'r1' ORDER BY version DESC`),
   ]);
   const clients = await all<{ id: string; name: string }>(db, `SELECT id, name FROM clients ORDER BY name`);
-  return c.json({ template: tpl, templateVersions: versions, caseStudies: cases.map(serializeCase), margin: m, ghlClientId: await ghlClientId(db), clients });
+  const tc = await first<{ value: string | null }>(db, `SELECT value FROM agency_settings WHERE key = 'prospects_contexte_tunnel'`);
+  return c.json({ template: tpl, templateVersions: versions, caseStudies: cases.map(serializeCase), margin: m, ghlClientId: await ghlClientId(db), clients,
+    tunnelContext: tc?.value?.trim() || DEFAULT_TUNNEL_CONTEXT, tunnelContextIsDefault: !tc?.value?.trim() });
 });
 
 prospects.put('/prospects-reglages', async (c) => {
@@ -595,6 +618,12 @@ prospects.put('/prospects-reglages', async (c) => {
     if (!Number.isFinite(n) || n <= 0 || n > 1) throw new HttpError(400, 'Marge acceptable : entre 0 et 1 (0,25 pour 25 %).');
     stmts.push(db.prepare(`INSERT INTO agency_settings (key, value, updated_at) VALUES ('prospects_marge_acceptable', ?1, ?2)
       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(String(n), now));
+  }
+  if ('tunnelContext' in b) {
+    const v = b.tunnelContext == null ? '' : String(b.tunnelContext).trim();
+    if (v.length > 8000) throw new HttpError(400, 'Contexte du tunnel trop long (8 000 caractères au plus).');
+    stmts.push(db.prepare(`INSERT INTO agency_settings (key, value, updated_at) VALUES ('prospects_contexte_tunnel', ?1, ?2)
+      ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(v || null, now));
   }
   if ('ghlClientId' in b) {
     const v = b.ghlClientId ? String(b.ghlClientId) : null;
@@ -697,6 +726,9 @@ async function buildBrief(db: D1Database, st: Loaded, type: ProspectDocType, doc
     out.push('## Transcription du R1', st.r1?.transcript?.trim() || '(pas de transcription : travailler à partir des notes de la trame uniquement)', '');
   } else {
     if (analyse) out.push('## Analyse post-R1 validée', '```json', analyse.content_json ?? '{}', '```', '');
+    const recherche = st.validated('recherche');
+    if (type !== 'recherche' && recherche) out.push('## Recherche marché validée', '```json', recherche.content_json ?? '{}', '```', '');
+    if (type !== 'recherche') out.push("## Contexte du tunnel de vente d'Obsidian Partners pour les SaaS (la méthode à appliquer au marché du prospect)", await tunnelContext(db), '');
     if ((type === 'script_loom' || type === 'pitch_r2') && plan) out.push("## Mini plan d'action validé", '```json', plan.content_json ?? '{}', '```', '');
   }
   if (type === 'plan' || type === 'pitch_r2') {
@@ -705,7 +737,8 @@ async function buildBrief(db: D1Database, st: Loaded, type: ProspectDocType, doc
     for (const cs of cases) out.push(`- id \`${cs.id}\` — ${cs.client}${cs.target ? ` · cible : ${cs.target}` : ''}${cs.vertical ? ` · verticale : ${cs.vertical}` : ''} · chiffres officiels : ${cs.figures?.trim() || '(non renseignés)'}`);
     out.push('');
   }
-  if (type === 'plan') out.push('## Recherche marché (collée par Romain)', p.market_research?.trim() || '(aucune : ne rien inventer sur le marché, les concurrents ou leurs publicités)', '');
+  if (type === 'plan') out.push('## Compléments de recherche (collés par Romain)', p.market_research?.trim() || '(aucun)', '');
+  if (type === 'recherche') out.push('## Ce que tu cherches', `Site du prospect : ${p.website ?? "à trouver à partir du nom du logiciel"}. Marchés et concurrents : ceux de l'analyse validée ci-dessus. Notes de Romain à prendre en compte : ${p.market_research?.trim() || 'aucune'}.`, '');
   if (type === 'pitch_r2') {
     const guides = await all<{ title: string; kind: string; url: string | null }>(db, 'SELECT title, kind, url FROM guides WHERE client_id IS NULL AND published = 1 ORDER BY sort_order');
     out.push('## Ressources à envoyer avant le R2 (bibliothèque de guides)');
@@ -728,6 +761,7 @@ function parseDeposit(type: ProspectDocType, raw: unknown) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new HttpError(400, 'JSON invalide : un objet est attendu.');
   const required: Record<ProspectDocType, string[]> = {
     analyse: ['fiche', 'forces', 'declencheur', 'objections', 'verdict'],
+    recherche: ['site', 'concurrents', 'langageCible', 'synthese'],
     plan: ['verticale', 'angles', 'actionsSansAgence'],
     script_loom: ['passages', 'messageEmail', 'messageSms'],
     pitch_r2: ['recap', 'plan', 'objections', 'questionCloture', 'pointsACreuser'],
