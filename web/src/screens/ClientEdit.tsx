@@ -87,6 +87,7 @@ export function ClientEditScreen({ clientId }: { clientId: string | null }) {
         right={!isNew && <a class="ghost-btn" href={`/c/${clientId}/tableau-de-bord`} onClick={(e) => { e.preventDefault(); navigate(`/c/${clientId}/tableau-de-bord`); }}>Ouvrir l'espace</a>} />
       {err && <div class="banner alert" role="alert">{err}</div>}
       {saved && <div class="banner" role="status">{saved}</div>}
+      {!isNew && <ProspectOrigin clientId={clientId!} />}
       {!isNew && <Parcours clientId={clientId!} key={saved ?? ''} />}
       <form onSubmit={save}>
         <div class="card section">
@@ -170,4 +171,11 @@ function Parcours({ clientId }: { clientId: string }) {
       </ol>
     </div>
   );
+}
+
+/** Fiche prospect d'origine (section 29), en lecture : rien n'est copié dans l'onboarding. */
+function ProspectOrigin({ clientId }: { clientId: string }) {
+  const { data } = useApi<{ items: { id: string; name: string }[] }>(`/agence/prospects?clientId=${encodeURIComponent(clientId)}`, [clientId]);
+  if (!data?.items.length) return null;
+  return <p class="small section">Prospect d'origine : {data.items.map((p) => <a href={`/agence/prospects/${p.id}`} style="margin-right:8px">{p.name}</a>)}</p>;
 }

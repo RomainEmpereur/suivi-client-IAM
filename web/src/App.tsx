@@ -16,6 +16,7 @@ import { FinanceScreen } from './screens/Finance.tsx';
 import { RequestsScreen } from './screens/Requests.tsx';
 import { OptimisationsScreen } from './screens/Optimisations.tsx';
 import { AdsScreen } from './screens/Ads.tsx';
+import { ProspectScreen, ProspectSettingsScreen, ProspectsScreen } from './screens/Prospects.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
 } from './screens/Screens.tsx';
@@ -108,6 +109,7 @@ function Shell() {
           <div class="nav-group">
             {view === 'agence' && <a class="nav-link" href="/agence" aria-current={path === '/agence' ? 'page' : undefined}>Console multi-clients</a>}
             {view === 'agence' && <RequestsLink path={path} />}
+            {view === 'agence' && <a class="nav-link" href="/agence/prospects" aria-current={path.startsWith('/agence/prospects') ? 'page' : undefined}>Prospects</a>}
             {view === 'agence' && <a class="nav-link" href="/agence/finance" aria-current={path === '/agence/finance' ? 'page' : undefined}>Suivi financier</a>}
             <label class="label" for="client-select" style="padding:10px 10px 6px">Client</label>
             <select id="client-select" class="client-select" value={activeClient ?? ''}
@@ -148,6 +150,9 @@ function Shell() {
           : path === '/agence/guides' && isAgency && view === 'agence' ? <AgencyGuidesScreen />
           : path === '/agence/finance' && isAgency && view === 'agence' ? <FinanceScreen />
           : path === '/agence/demandes' && isAgency && view === 'agence' ? <RequestsScreen />
+          : path === '/agence/prospects' && isAgency && view === 'agence' ? <ProspectsScreen />
+          : path === '/agence/prospects/reglages' && isAgency && view === 'agence' ? <ProspectSettingsScreen />
+          : path.startsWith('/agence/prospects/') && isAgency && view === 'agence' ? <ProspectScreen key={path + search} id={path.slice('/agence/prospects/'.length)} search={search} />
           : agencyClient && isAgency && view === 'agence' ? <ClientEditScreen key={agencyClient} clientId={agencyClient === 'nouveau' ? null : agencyClient} />
           : clientId ? <ClientScreen key={`${clientId}-${view}-${subId ?? ''}`} clientId={clientId} screen={screen} subId={subId} search={search} />
           : <Loading />}

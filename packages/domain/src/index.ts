@@ -11,3 +11,5 @@ export * from './pilotage.ts';
 export * from './integrations.ts';
 export * from './finance.ts';
 export * from './optimisations.ts';
+export * from './prospects.ts';
+export * from './generated/prospect-prompts.ts';

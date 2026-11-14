@@ -520,3 +520,28 @@ Le lot 8 est le seul qui compte vraiment : tant que deux sources coexistent, l'e
 1. **Le contenu réel du dépôt Leadflows.** Tout le lot 0 en dépend, et la section 5 pourrait être caduque.
 2. **Le détail des champs GoHighLevel** réellement remplis chez les clients : sans savoir quels statuts, étapes et sources sont renseignés, les règles de la section 14 restent théoriques.
 3. **Ce que les clients demandent aujourd'hui par message.** Les questions récurrentes devraient dicter l'ordre des écrans ; elles n'ont jamais été relevées.
+
+---
+
+## 29. Module Prospects — du R1 au R2
+
+Vue agence uniquement (décision 0027). Un prospect avance en quatre étapes ; chacune s'ouvre quand la précédente est validée. Rien n'est produit sans un clic, rien n'est envoyé au prospect.
+
+1. **R1 à prévoir + trame** : fiche créée à la prise du R1 (nom, logiciel, site, contacts, date, source). Trame versionnée en cinq blocs (cadre, situation, compatibilité, estimation avec calcul en direct, issue) ; chaque fiche garde la version de trame utilisée. Mode « en appel » : questions en grand, saisie à côté, enregistrement à chaque frappe.
+2. **Analyse post-R1** : depuis la transcription collée. Fiche, quatre forces avec verbatims, déclencheur, déjà essayé, coût de l'inaction, objections, verdict (qualifié / à creuser / disqualifié), message de sortie si disqualifié.
+3. **Mini plan d'action + script du Loom** : une verticale (+ la suivante, facultative), trois angles dans les mots du R1, coût maximum d'un rendez-vous calculé par le code, deux ou trois actions faisables sans l'agence, cas client le plus proche (liste et chiffres officiels saisis dans les réglages). Champ « Recherche marché » utilisé s'il est rempli. Script 6–8 min, écran à montrer par passage, email et SMS à copier (jamais envoyés).
+4. **R2 adapté** : récap dans ses mots, plan en trois points, réponse prouvée à chaque objection, offre et prix **saisis par Romain**, question de clôture, trois points à creuser, ressource à envoyer avant. Issue : signé / perdu / à relancer, motif, montant.
+
+Règles non négociables :
+- Aucun préremplissage de l'onboarding client depuis le R1.
+- Rien d'inventé : une information absente devient « à confirmer en R2 ».
+- Verbatims vérifiés par le code contre la transcription : une citation introuvable s'affiche en rouge et bloque la validation.
+- Calculs faits par le code : coût max. d'un RDV = ticket mensuel × durée de vie (mois) × marge acceptable (25 % par défaut, réglable) × taux de closing.
+- Qualification : clients payants, vente en démo, coût max. compatible avec un CAC de 195–326 €, budget ≥ 20 €/jour. Disqualifié → étapes 3 et 4 fermées, seul le message de sortie est proposé ; Romain peut forcer la suite.
+- Un document validé n'est jamais écrasé (nouvelle version) ; un document modifié à la main n'est réécrit qu'après confirmation.
+- Prompts dans le dépôt (`docs/prospects/prompts/`), règles « Rien d'inventé » et « Aucun prix » mot pour mot.
+- Supprimer un prospect supprime ses transcriptions et documents. Aucune écriture externe.
+
+Écran « Prospects » : tableau trié par prochaine action (prospect, logiciel, étape, date R1, date R2, verdict, objection principale, jours sans action) ; ligne rouge si un R1 tenu attend son analyse depuis 24 h ou si un R2 a lieu dans moins de 48 h sans pitch validé. Trois indicateurs : R1 tenus sur 30 jours, passage R1 → R2, signature après R2.
+
+Recette : trois vrais R1 traités de bout en bout.

@@ -337,7 +337,7 @@ async function robotPiece(c: Context<{ Bindings: Bindings }>) {
   return { o, p, pieces, st };
 }
 
-robot.get('/clients/:clientId/delivery/:step{[^/]+~[^/]+}/brief', async (c) => {
+robot.get('/clients/:clientId/delivery/:step{s[0-9][a-z0-9]*~[^/]+}/brief', async (c) => {
   const { o, p, pieces, st } = await robotPiece(c);
   const step = DELIVERY_STEP_BY_KEY.get(p.step)!;
   const base = st.byStep.get(p.step);
@@ -349,7 +349,7 @@ robot.get('/clients/:clientId/delivery/:step{[^/]+~[^/]+}/brief', async (c) => {
   return c.json({ masterPrompt: MASTER_PROMPT, brief });
 });
 
-robot.put('/clients/:clientId/delivery/:step{[^/]+~[^/]+}', async (c) => {
+robot.put('/clients/:clientId/delivery/:step{s[0-9][a-z0-9]*~[^/]+}', async (c) => {
   const { o, p } = await robotPiece(c);
   const body = await c.req.json().catch(() => null) as { contentMd?: unknown } | null;
   const content = readContent(body?.contentMd);
@@ -361,7 +361,7 @@ robot.put('/clients/:clientId/delivery/:step{[^/]+~[^/]+}', async (c) => {
   return c.json({ ok: true });
 });
 
-robot.post('/clients/:clientId/delivery/:step{[^/]+~[^/]+}/error', async (c) => {
+robot.post('/clients/:clientId/delivery/:step{s[0-9][a-z0-9]*~[^/]+}/error', async (c) => {
   const { o, p } = await robotPiece(c);
   const body = await c.req.json().catch(() => null) as { message?: unknown } | null;
   const message = typeof body?.message === 'string' ? body.message.trim().slice(0, 1000) : 'Échec sans message.';

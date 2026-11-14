@@ -408,3 +408,7 @@ tr.row-alert td { background: var(--alert-soft); }
 .card.deliverable.has-request { border-color: var(--alert); }
 .comment-pending { outline: 1px solid var(--alert); }
 @media (prefers-reduced-motion: reduce) { .urgent-dot, .nav-count { animation: none; } }
+
+/* Module Prospects : les pastilles de qualification peuvent passer à la ligne (mobile). */
+.pill-wrap .pill { white-space: normal; max-width: 100%; border-radius: 12px; }
+.pill-wrap .pill::before { flex: none; }
