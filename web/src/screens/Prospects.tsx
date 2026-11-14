@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import {
   PROSPECT_DOC_LABEL, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_STAGE_LABEL, PROSPECT_VERDICT_LABEL, formatDate, formatDateTime, formatEuros,
-  maxCostPerAppointment, figureFromField, type ProspectDocType, type ProspectFigure, type TemplateBlock,
+  maxCostPerAppointment, figureFromField, renderProposal, type ProspectDocType, type ProspectFigure, type TemplateBlock,
 } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { navigate } from '../router.ts';
@@ -69,7 +69,7 @@ export function ProspectsScreen() {
     <>
       <PageHead a="Prospects" b="du R1 au R2"
         sub="Chaque prospect, de la prise du premier rendez-vous à l'issue du second. Trame pendant l'appel, analyse, plan et script du Loom, pitch du R2 : Claude rédige au prochain passage, vous relisez et validez. Rien n'est envoyé au prospect depuis l'espace."
-        right={<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="ghost-btn" href="/agence/prospects/reglages">Réglages</a>{!creating && <button class="btn" onClick={() => setCreating(true)}>+ Nouveau prospect</button>}</div>} />
+        right={<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="ghost-btn" href="/agence/prospects/proposition">Proposition commerciale</a><a class="ghost-btn" href="/agence/prospects/reglages">Réglages</a>{!creating && <button class="btn" onClick={() => setCreating(true)}>+ Nouveau prospect</button>}</div>} />
       <div class="grid section" style="grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px">
         <KpiCard label="R1 tenus sur 30 jours" value={String(k.r1Held30)} />
         <KpiCard label="Passage du R1 au R2" value={pct(k.r1ToR2)} missingReason="Aucun R1 tenu" sub={`${k.r2Total} R2 sur ${k.r1HeldTotal} R1 tenus`} />
@@ -687,7 +687,7 @@ function ProposalPanel({ data, reload }: { data: Full; reload: () => void }) {
         {doc?.editedByHand && <span class="small muted">modifiée à la main</span>}
         <span style="margin-left:auto"><GenerateButton data={data} type="proposition" reload={reload} /></span>
       </div>
-      <p class="small muted" style="margin:0">Votre modèle (Prospects → Réglages), adapté au prospect par Claude à partir de l'analyse et du plan validés. Les prix viennent des réglages, jamais de Claude.</p>
+      <p class="small muted" style="margin:0">Votre <a href="/agence/prospects/proposition">modèle de proposition</a>, adapté au prospect par Claude à partir de l'analyse et du plan validés. Les prix viennent des réglages, jamais de Claude.</p>
       {d.latest?.status === 'erreur' && <p class="small" style="color:var(--alert);margin:0">Échec de la rédaction : {d.latest.lastError}</p>}
       {todo && <p class="small" style="color:var(--alert);margin:0"><strong>Il reste des « [à compléter] »</strong> : complétez-les (Modifier) avant de valider.</p>}
       {doc && (edit
@@ -778,9 +778,6 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
   const [cases, setCases] = useState(data.caseStudies);
   const [blocks, setBlocks] = useState<TemplateBlock[]>(data.template.blocks);
   const [tunnel, setTunnel] = useState(data.tunnelContext);
-  const [ptpl, setPtpl] = useState(data.proposal.template);
-  const [poffer, setPoffer] = useState(data.proposal.offer);
-  const [pfolder, setPfolder] = useState(data.proposal.folderId ?? '');
   const [msg, setMsg] = useState<string | null>(null);
   async function put(body: Record<string, unknown>, ok: string) {
     setMsg(null);
@@ -804,27 +801,10 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
         <label class="field">Marge acceptable (%) — coût max. d'un RDV = ticket × durée × marge × closing<input inputMode="decimal" value={margin} onInput={(e) => setMargin((e.target as HTMLInputElement).value)} /></label>
         <button class="ghost-btn" onClick={() => put({ margin: Number(margin.replace(',', '.')) / 100 }, 'Marge enregistrée.')}>Enregistrer</button>
       </section>
-      <section class="card section" style="display:flex;flex-direction:column;gap:10px">
+      <section class="card section" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <h3 style="margin:0">Proposition commerciale</h3>
-        <p class="small muted" style="margin:0">
-          Le modèle est repris tel quel ; Claude ne remplit que {'{{SITUATION}}'}, {'{{OBJECTIFS}}'}, {'{{DEJA_ESSAYE}}'}, {'{{PLAN}}'}, {'{{CAS_CLIENT}}'} et {'{{PROCHAINES_ETAPES}}'}.
-          Le code remplit {'{{ENTREPRISE}}'}, {'{{PROSPECT}}'}, {'{{DATE}}'} et les prix : {'{{PRIX_MISE_EN_PLACE}}'}, {'{{PRIX_RESULTAT}}'}, {'{{CONDITION_RESULTAT}}'}.{data.proposal.templateIsDefault ? ' Modèle par défaut, à ajuster.' : ''}
-        </p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px">
-          <label class="field">Mise en place<input value={poffer.setup} onInput={(e) => setPoffer({ ...poffer, setup: (e.target as HTMLInputElement).value })} /></label>
-          <label class="field">Au résultat<input value={poffer.success} onInput={(e) => setPoffer({ ...poffer, success: (e.target as HTMLInputElement).value })} /></label>
-          <label class="field" style="grid-column:span 2">Condition du paiement au résultat<input value={poffer.condition} onInput={(e) => setPoffer({ ...poffer, condition: (e.target as HTMLInputElement).value })} /></label>
-        </div>
-        <div><button class="ghost-btn" onClick={() => put({ proposalOffer: poffer }, 'Offre enregistrée.')}>Enregistrer l'offre</button></div>
-        <label class="field">Modèle (markdown)<textarea rows={18} style="font-family:var(--font-mono);font-size:12px" value={ptpl} onInput={(e) => setPtpl((e.target as HTMLTextAreaElement).value)} /></label>
-        <div style="display:flex;gap:8px">
-          {ptpl !== data.proposal.template && <button class="btn" onClick={() => put({ proposalTemplate: ptpl }, 'Modèle enregistré.')}>Enregistrer le modèle</button>}
-          {!data.proposal.templateIsDefault && <button class="ghost-btn" onClick={() => put({ proposalTemplate: null }, 'Modèle par défaut rétabli.')}>Revenir au modèle par défaut</button>}
-        </div>
-        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-          <label class="field" style="flex:1;min-width:260px">Dossier Google Drive des propositions (lien ou identifiant)<input value={pfolder} onInput={(e) => setPfolder((e.target as HTMLInputElement).value)} placeholder="https://drive.google.com/drive/folders/…" /></label>
-          <button class="ghost-btn" onClick={() => put({ driveFolder: pfolder }, 'Dossier Drive enregistré.')}>Enregistrer</button>
-        </div>
+        <span class="small muted">Modèle, prix et dossier Drive : sur leur propre page.</span>
+        <a class="ghost-btn" href="/agence/prospects/proposition">Modifier le modèle</a>
       </section>
       <section class="card section" style="display:flex;flex-direction:column;gap:10px">
         <h3 style="margin:0">Contexte du tunnel de vente des SaaS</h3>
@@ -864,6 +844,71 @@ function SettingsForm({ data, reload }: { data: Settings; reload: () => void }) 
         ))}
         <div><button class="btn" onClick={() => put({ template: blocks }, 'Nouvelle version de la trame enregistrée.')}>Enregistrer une nouvelle version</button></div>
         <p class="small muted" style="margin:0">Versions : {data.templateVersions.map((v) => `v${v.version} (${formatDate(v.created_at)})`).join(' · ') || 'v1 (par défaut)'}</p>
+      </section>
+    </>
+  );
+}
+
+// ─── Modèle de proposition commerciale (décision 0034) ───────────────────────
+
+const PREVIEW_VALUES: Record<string, string> = {
+  ENTREPRISE: 'Logiciel du prospect', PROSPECT: 'Nom du prospect', DATE: 'date du jour',
+  SITUATION: '*[Rédigé par Claude : où en est le prospect, dans ses mots, avec une ou deux citations du R1.]*',
+  OBJECTIFS: '*[Rédigé par Claude : ce qu\'il veut atteindre, avec ses chiffres.]*',
+  DEJA_ESSAYE: '*[Rédigé par Claude : ce qu\'il a essayé, avec qui, pourquoi ça n\'a pas suffi.]*',
+  PLAN: '*[Rédigé par Claude : « Chez vous : » verticale, trois angles, coût maximum d\'un rendez-vous.]*',
+  CAS_CLIENT: '*[Rédigé par Claude : le cas client retenu, avec ses chiffres officiels.]*',
+  PROCHAINES_ETAPES: '*[Rédigé par Claude : trois à cinq étapes après la signature.]*',
+};
+
+export function ProposalTemplateScreen() {
+  const { data, error, reload } = useApi<Settings>('/agence/prospects-reglages', []);
+  if (error) return <ErrorBox error={error} />;
+  if (!data) return <Loading />;
+  return <ProposalTemplateForm key={data.proposal.template + JSON.stringify(data.proposal.offer) + (data.proposal.folderId ?? '')} data={data} reload={reload} />;
+}
+
+function ProposalTemplateForm({ data, reload }: { data: Settings; reload: () => void }) {
+  const [ptpl, setPtpl] = useState(data.proposal.template);
+  const [poffer, setPoffer] = useState(data.proposal.offer);
+  const [pfolder, setPfolder] = useState(data.proposal.folderId ?? '');
+  const [msg, setMsg] = useState<string | null>(null);
+  async function put(body: Record<string, unknown>, ok: string) {
+    setMsg(null);
+    try { await api('/agence/prospects-reglages', { method: 'PUT', body: JSON.stringify(body) }); setMsg(ok); reload(); } catch (x) { setMsg((x as ApiError).message); }
+  }
+  const preview = renderProposal(ptpl, { ...PREVIEW_VALUES, PRIX_MISE_EN_PLACE: poffer.setup, PRIX_RESULTAT: poffer.success, CONDITION_RESULTAT: poffer.condition });
+  return (
+    <>
+      <PageHead a="Proposition" b="commerciale" sub="Le modèle repris pour chaque prospect avant le R2. Claude n'adapte que les parties propres au prospect ; les prix viennent d'ici, jamais de Claude."
+        right={<a class="ghost-btn" href="/agence/prospects">← Prospects</a>} />
+      {msg && <p class="small section">{msg}</p>}
+      <section class="card section" style="display:flex;flex-direction:column;gap:10px">
+        <h3 style="margin:0">Modèle, prix et dossier</h3>
+        <p class="small muted" style="margin:0">
+          Le modèle est repris tel quel ; Claude ne remplit que {'{{SITUATION}}'}, {'{{OBJECTIFS}}'}, {'{{DEJA_ESSAYE}}'}, {'{{PLAN}}'}, {'{{CAS_CLIENT}}'} et {'{{PROCHAINES_ETAPES}}'}.
+          Le code remplit {'{{ENTREPRISE}}'}, {'{{PROSPECT}}'}, {'{{DATE}}'} et les prix : {'{{PRIX_MISE_EN_PLACE}}'}, {'{{PRIX_RESULTAT}}'}, {'{{CONDITION_RESULTAT}}'}.{data.proposal.templateIsDefault ? ' Modèle par défaut, à ajuster.' : ''}
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px">
+          <label class="field">Mise en place<input value={poffer.setup} onInput={(e) => setPoffer({ ...poffer, setup: (e.target as HTMLInputElement).value })} /></label>
+          <label class="field">Au résultat<input value={poffer.success} onInput={(e) => setPoffer({ ...poffer, success: (e.target as HTMLInputElement).value })} /></label>
+          <label class="field" style="grid-column:1/-1">Condition du paiement au résultat<input value={poffer.condition} onInput={(e) => setPoffer({ ...poffer, condition: (e.target as HTMLInputElement).value })} /></label>
+        </div>
+        <div><button class="ghost-btn" onClick={() => put({ proposalOffer: poffer }, 'Offre enregistrée.')}>Enregistrer l'offre</button></div>
+        <label class="field">Modèle (markdown)<textarea rows={18} style="font-family:var(--font-mono);font-size:12px" value={ptpl} onInput={(e) => setPtpl((e.target as HTMLTextAreaElement).value)} /></label>
+        <div style="display:flex;gap:8px">
+          {ptpl !== data.proposal.template && <button class="btn" onClick={() => put({ proposalTemplate: ptpl }, 'Modèle enregistré.')}>Enregistrer le modèle</button>}
+          {!data.proposal.templateIsDefault && <button class="ghost-btn" onClick={() => put({ proposalTemplate: null }, 'Modèle par défaut rétabli.')}>Revenir au modèle par défaut</button>}
+        </div>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+          <label class="field" style="flex:1;min-width:min(260px,100%)">Dossier Google Drive des propositions (lien ou identifiant)<input value={pfolder} onInput={(e) => setPfolder((e.target as HTMLInputElement).value)} placeholder="https://drive.google.com/drive/folders/…" /></label>
+          <button class="ghost-btn" onClick={() => put({ driveFolder: pfolder }, 'Dossier Drive enregistré.')}>Enregistrer</button>
+        </div>
+      </section>
+      <section class="card section" style="display:flex;flex-direction:column;gap:10px">
+        <h3 style="margin:0">Aperçu</h3>
+        <p class="small muted" style="margin:0">Le modèle tel qu'il sortira, avec vos prix ; les parties en italique seront rédigées par Claude pour chaque prospect. Aperçu non enregistré tant que vous n'avez pas cliqué « Enregistrer ».</p>
+        <article class="md-content" style="border:1px solid var(--border);border-radius:8px;padding:16px 20px" dangerouslySetInnerHTML={{ __html: renderMarkdown(preview) }} />
       </section>
     </>
   );

@@ -16,7 +16,7 @@ import { FinanceScreen } from './screens/Finance.tsx';
 import { RequestsScreen } from './screens/Requests.tsx';
 import { OptimisationsScreen } from './screens/Optimisations.tsx';
 import { AdsScreen } from './screens/Ads.tsx';
-import { ProspectScreen, ProspectSettingsScreen, ProspectsScreen } from './screens/Prospects.tsx';
+import { ProposalTemplateScreen, ProspectScreen, ProspectSettingsScreen, ProspectsScreen } from './screens/Prospects.tsx';
 import { TasksLink, TasksScreen } from './screens/Tasks.tsx';
 import {
   AppointmentsScreen, ConnectionsScreen, ConsoleScreen, GuidesScreen, InfrastructureScreen, LaterScreen, PilotageScreen,
@@ -155,6 +155,7 @@ function Shell() {
           : path === '/agence/taches' && isAgency && view === 'agence' ? <TasksScreen search={search} />
           : path === '/agence/prospects' && isAgency && view === 'agence' ? <ProspectsScreen />
           : path === '/agence/prospects/reglages' && isAgency && view === 'agence' ? <ProspectSettingsScreen />
+          : path === '/agence/prospects/proposition' && isAgency && view === 'agence' ? <ProposalTemplateScreen />
           : path.startsWith('/agence/prospects/') && isAgency && view === 'agence' ? <ProspectScreen key={path + search} id={path.slice('/agence/prospects/'.length)} search={search} />
           : agencyClient && isAgency && view === 'agence' ? <ClientEditScreen key={agencyClient} clientId={agencyClient === 'nouveau' ? null : agencyClient} />
           : clientId ? <ClientScreen key={`${clientId}-${view}-${subId ?? ''}`} clientId={clientId} screen={screen} subId={subId} search={search} />

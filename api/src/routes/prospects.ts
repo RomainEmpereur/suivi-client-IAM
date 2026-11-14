@@ -604,7 +604,7 @@ prospects.post('/prospects/:id/documents/proposition/gdoc', async (c) => {
   const doc = st.validated('proposition');
   if (!doc) throw new HttpError(409, "Validez d'abord la proposition commerciale.");
   if (doc.gdoc_status === 'demande') throw new HttpError(409, 'Google Doc déjà demandé : il sera créé au prochain passage.');
-  if (!(await proposalSettings(db)).folderId) throw new HttpError(409, 'Renseignez le dossier Google Drive des propositions dans Prospects → Réglages.');
+  if (!(await proposalSettings(db)).folderId) throw new HttpError(409, 'Renseignez le dossier Google Drive des propositions dans Prospects → Proposition commerciale.');
   const now = nowIso();
   await db.batch([
     db.prepare(`UPDATE prospect_documents SET gdoc_status = 'demande', gdoc_error = NULL, gdoc_requested_at = ?1, updated_at = ?1 WHERE id = ?2`).bind(now, doc.id),
