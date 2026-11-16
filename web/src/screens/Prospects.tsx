@@ -513,6 +513,7 @@ function DocPanel({ data, type, reload, children }: { data: Full; type: Prospect
   const d = data.docs[type];
   const doc = d.latest && d.latest.status === 'brouillon' ? d.latest : d.validated ?? (d.latest?.status === 'valide' ? d.latest : null);
   const [edit, setEdit] = useState(false);
+  const [askGaps, setAskGaps] = useState<string[] | null>(null);
   const [json, setJson] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const missing = new Set((doc?.verbatims ?? []).filter((x) => !x.found).map((x) => x.quote.trim()));
@@ -541,11 +542,20 @@ function DocPanel({ data, type, reload, children }: { data: Full; type: Prospect
       {children}
       {doc && doc.status === 'brouillon' && (
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          {!edit && <button class="btn" disabled={doc.verbatimsMissing > 0} onClick={() => {
+          {!edit && !askGaps && <button class="btn" disabled={doc.verbatimsMissing > 0} onClick={() => {
             const gaps = type === 'analyse' ? gapsOf(data) : [];
             if (!gaps.length) return patch({ status: 'valide' });
-            if (confirm(`Fiche incomplète : ${gaps.map((x) => x.label).join(', ')}.\n\nCes éléments passeront en « à confirmer en R2 ». Valider quand même ?`)) patch({ status: 'valide', confirmMissing: true });
+            setAskGaps(gaps.map((x) => x.label));
           }}>Valider</button>}
+          {!edit && askGaps && (
+            <div role="alert" style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--warn);border-radius:8px;flex:1 1 100%">
+              <span class="small"><strong>Fiche incomplète :</strong> {askGaps.join(', ')}. Ces éléments passeront en « à confirmer en R2 ».</span>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn" onClick={() => { setAskGaps(null); patch({ status: 'valide', confirmMissing: true }); }}>Valider quand même</button>
+                <button class="ghost-btn" onClick={() => setAskGaps(null)}>Annuler</button>
+              </div>
+            </div>
+          )}
           {!edit && <button class="ghost-btn" onClick={() => { setJson(JSON.stringify(doc.content, null, 2)); setEdit(true); }}>Modifier</button>}
           {edit && <><button class="btn" onClick={() => { try { patch({ content: JSON.parse(json) }); } catch { setErr('JSON invalide.'); } }}>Enregistrer</button><button class="ghost-btn" onClick={() => setEdit(false)}>Annuler</button></>}
         </div>
