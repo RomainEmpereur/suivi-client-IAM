@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
   DEFAULT_MARGIN, DEFAULT_R1_TEMPLATE, DEFAULT_TUNNEL_CONTEXT, PROSPECT_DOC_LABEL, PROSPECT_DOC_TYPES, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_PROMPTS,
-  PROSPECT_STAGES, DEFAULT_PROPOSAL_OFFER, DEFAULT_PROPOSAL_TEMPLATE, PROPOSAL_AI_FIELDS, autofillFields, proposalHtml, renderProposal, type ProposalOffer, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks, refreshAnalyse,
+  PROSPECT_STAGES, DEFAULT_PROPOSAL_OFFER, DEFAULT_PROPOSAL_TEMPLATE, PROPOSAL_AI_FIELDS, autofillFields, proposalHtml, proposalOfferValues, renderProposal, type ProposalOffer, checkVerbatims, trameCompleteness, collectVerbatims, figureFromField, maxCostPerAppointment, qualificationChecks, refreshAnalyse,
   type Figures, type ProspectDocType, type ProspectFigure, type ProspectStage, type TemplateBlock,
 } from '@obsidian/domain';
 import type { AppEnv, Bindings } from '../env.ts';
@@ -103,8 +103,7 @@ const parisDay = () => new Date().toLocaleDateString('fr-FR', { timeZone: 'Europ
 function proposalMarkdown(st: Loaded, cfg: Awaited<ReturnType<typeof proposalSettings>>, sections: Record<string, unknown>) {
   const ai = Object.fromEntries(PROPOSAL_AI_FIELDS.map((k) => [k, typeof sections[k] === 'string' ? (sections[k] as string) : null]));
   return renderProposal(cfg.template, {
-    ...ai, DATE: parisDay(), PRIX_TOTAL: cfg.offer.total,
-    PRIX_MISE_EN_PLACE: cfg.offer.setup, PRIX_RESULTAT: cfg.offer.success, CONDITION_RESULTAT: cfg.offer.condition,
+    ...ai, DATE: parisDay(), ...proposalOfferValues(cfg.offer),
   });
 }
 
@@ -675,8 +674,11 @@ prospects.put('/prospects-reglages', async (c) => {
   }
   if ('proposalOffer' in b) {
     const o = (b.proposalOffer ?? {}) as Record<string, unknown>;
-    const offer = { total: str(o.total, 80), setup: str(o.setup, 80), success: str(o.success, 80), condition: str(o.condition, 300) };
-    if (!offer.total || !offer.setup || !offer.success || !offer.condition) throw new HttpError(400, 'Offre : le total, les deux paiements et la condition sont requis.');
+    const offer = {
+      total: str(o.total, 80), setup: str(o.setup, 80), success: str(o.success, 80), condition: str(o.condition, 300),
+      success2: str(o.success2, 80), condition2: str(o.condition2, 300), management: str(o.management, 80), managementTerms: str(o.managementTerms, 300),
+    };
+    if (Object.values(offer).some((v) => !v)) throw new HttpError(400, "Offre : le total, les trois paiements, leurs conditions et la gestion mensuelle sont requis.");
     setKey('prospects_proposition_offre', JSON.stringify(offer));
   }
   if ('driveFolder' in b) {
@@ -796,7 +798,7 @@ async function buildBrief(db: D1Database, st: Loaded, type: ProspectDocType, doc
     const pitch = st.validated('pitch_r2');
     if (pitch) out.push('## Pitch R2 validé', '```json', pitch.content_json ?? '{}', '```', '');
     out.push(`## Modèle de la proposition (fixe : tu ne remplis que ${PROPOSAL_AI_FIELDS.join(', ')})`, '```markdown', cfg.template.trim(), '```', '');
-    out.push(`## Offre (insérée par le code, à ne jamais réécrire ni commenter) : total ${cfg.offer.total} ; mise en place ${cfg.offer.setup} ; au résultat ${cfg.offer.success} (${cfg.offer.condition})`, '');
+    out.push(`## Offre (insérée par le code, à ne jamais réécrire ni commenter) : total ${cfg.offer.total} ; mise en place ${cfg.offer.setup} ; au résultat ${cfg.offer.success} (${cfg.offer.condition}) puis ${cfg.offer.success2} (${cfg.offer.condition2}) ; gestion ${cfg.offer.management} (${cfg.offer.managementTerms})`, '');
   }
   if (type === 'plan' || type === 'pitch_r2' || type === 'proposition') {
     const cases = await all<CaseStudyRow>(db, 'SELECT * FROM case_studies ORDER BY sort, client');

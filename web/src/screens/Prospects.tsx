@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import {
   PROSPECT_DOC_LABEL, PROSPECT_FIGURES, PROSPECT_FIGURE_LABEL, PROSPECT_STAGE_LABEL, PROSPECT_VERDICT_LABEL, formatDate, formatDateTime, formatEuros,
-  maxCostPerAppointment, figureFromField, renderProposal, type ProspectDocType, type ProspectFigure, type TemplateBlock,
+  maxCostPerAppointment, figureFromField, proposalOfferValues, renderProposal, type ProposalOffer, type ProspectDocType, type ProspectFigure, type TemplateBlock,
 } from '@obsidian/domain';
 import { ApiError, api, useApi } from '../api.ts';
 import { navigate } from '../router.ts';
@@ -764,7 +764,7 @@ function CallMode({ data, step, reload }: { data: Full; step: 1 | 4; reload: () 
 // ─── Réglages ─────────────────────────────────────────────────────────────────
 
 interface Settings { template: { version: number; blocks: TemplateBlock[] }; templateVersions: { version: number; created_at: string }[]; ghlClientId: string | null; clients: { id: string; name: string }[]; caseStudies: { id: string; client: string; target: string | null; vertical: string | null; figures: string | null; url: string | null }[]; margin: number; tunnelContext: string; tunnelContextIsDefault: boolean;
-  proposal: { template: string; templateIsDefault: boolean; offer: { total: string; setup: string; success: string; condition: string }; folderId: string | null } }
+  proposal: { template: string; templateIsDefault: boolean; offer: ProposalOffer; folderId: string | null } }
 
 export function ProspectSettingsScreen() {
   const { data, error, reload } = useApi<Settings>('/agence/prospects-reglages', []);
@@ -864,6 +864,13 @@ export function ProposalTemplateScreen() {
   return <ProposalTemplateForm key={data.proposal.template + JSON.stringify(data.proposal.offer) + (data.proposal.folderId ?? '')} data={data} reload={reload} />;
 }
 
+const OFFER_FIELDS: [keyof ProposalOffer, string, boolean?][] = [
+  ['total', 'Total'], ['setup', 'Paiement 1 : mise en place'],
+  ['success', 'Paiement 2 : au résultat'], ['condition', 'Paiement 2 : condition', true],
+  ['success2', 'Paiement 3 : au résultat'], ['condition2', 'Paiement 3 : condition', true],
+  ['management', 'Gestion mensuelle (après les 30 RDV)'], ['managementTerms', 'Gestion : engagement', true],
+];
+
 function ProposalTemplateForm({ data, reload }: { data: Settings; reload: () => void }) {
   const [ptpl, setPtpl] = useState(data.proposal.template);
   const [poffer, setPoffer] = useState(data.proposal.offer);
@@ -873,7 +880,7 @@ function ProposalTemplateForm({ data, reload }: { data: Settings; reload: () => 
     setMsg(null);
     try { await api('/agence/prospects-reglages', { method: 'PUT', body: JSON.stringify(body) }); setMsg(ok); reload(); } catch (x) { setMsg((x as ApiError).message); }
   }
-  const preview = renderProposal(ptpl, { ...PREVIEW_VALUES, PRIX_TOTAL: poffer.total, PRIX_MISE_EN_PLACE: poffer.setup, PRIX_RESULTAT: poffer.success, CONDITION_RESULTAT: poffer.condition });
+  const preview = renderProposal(ptpl, { ...PREVIEW_VALUES, ...proposalOfferValues(poffer) });
   return (
     <>
       <PageHead a="Proposition" b="commerciale" sub="Le modèle repris pour chaque prospect avant le R2. Claude n'adapte que les parties propres au prospect ; les prix viennent d'ici, jamais de Claude."
@@ -882,13 +889,12 @@ function ProposalTemplateForm({ data, reload }: { data: Settings; reload: () => 
       <section class="card section" style="display:flex;flex-direction:column;gap:10px">
         <h3 style="margin:0">Modèle, prix et dossier</h3>
         <p class="small muted" style="margin:0">
-          Le modèle est repris tel quel. Claude ne remplit que {'{{ENTREPRISE}}'}, {'{{LOGICIEL}}'}, {'{{CONTACTS}}'} et {'{{CIBLE}}'} ; le code remplit {'{{DATE}}'} et les prix {'{{PRIX_TOTAL}}'}, {'{{PRIX_MISE_EN_PLACE}}'}, {'{{PRIX_RESULTAT}}'}, {'{{CONDITION_RESULTAT}}'}. {'{{DEMARRAGE}}'} reste « [à compléter] » : vous saisissez la date du kick-off avant de valider.{data.proposal.templateIsDefault ? ' Modèle par défaut, à ajuster.' : ''}
+          Le modèle est repris tel quel. Claude ne remplit que {'{{ENTREPRISE}}'}, {'{{LOGICIEL}}'}, {'{{CONTACTS}}'} et {'{{CIBLE}}'} ; le code remplit {'{{DATE}}'} et les prix {'{{PRIX_TOTAL}}'}, {'{{PRIX_MISE_EN_PLACE}}'}, {'{{PRIX_RESULTAT}}'}, {'{{CONDITION_RESULTAT}}'}, {'{{PRIX_RESULTAT_2}}'}, {'{{CONDITION_RESULTAT_2}}'}, {'{{PRIX_GESTION}}'}, {'{{ENGAGEMENT_GESTION}}'}. {'{{DEMARRAGE}}'} reste « [à compléter] » : vous saisissez la date du kick-off avant de valider.{data.proposal.templateIsDefault ? ' Modèle par défaut, à ajuster.' : ''}
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px">
-          <label class="field">Total<input value={poffer.total} onInput={(e) => setPoffer({ ...poffer, total: (e.target as HTMLInputElement).value })} /></label>
-          <label class="field">Mise en place<input value={poffer.setup} onInput={(e) => setPoffer({ ...poffer, setup: (e.target as HTMLInputElement).value })} /></label>
-          <label class="field">Au résultat<input value={poffer.success} onInput={(e) => setPoffer({ ...poffer, success: (e.target as HTMLInputElement).value })} /></label>
-          <label class="field" style="grid-column:1/-1">Paiement au résultat : condition<input value={poffer.condition} onInput={(e) => setPoffer({ ...poffer, condition: (e.target as HTMLInputElement).value })} /></label>
+          {OFFER_FIELDS.map(([k, label, wide]) => (
+            <label class="field" style={wide ? 'grid-column:1/-1' : undefined}>{label}<input value={poffer[k]} onInput={(e) => setPoffer({ ...poffer, [k]: (e.target as HTMLInputElement).value })} /></label>
+          ))}
         </div>
         <div><button class="ghost-btn" onClick={() => put({ proposalOffer: poffer }, 'Offre enregistrée.')}>Enregistrer l'offre</button></div>
         <label class="field">Modèle (markdown)<textarea rows={18} style="font-family:var(--font-mono);font-size:12px" value={ptpl} onInput={(e) => setPtpl((e.target as HTMLTextAreaElement).value)} /></label>

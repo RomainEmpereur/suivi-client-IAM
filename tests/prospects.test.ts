@@ -347,7 +347,12 @@ describe('Prospects : proposition commerciale et son Google Doc (décision 0034)
     await deposit(call, id, 'plan', { verticale: { choix: 'Cabinets', raisons: [], suivante: null }, angles: [], coutMaxRdvExplication: '…', actionsSansAgence: ['a'], casClient: { id: 'cs_civex', pourquoi: '…' } });
     await call(`/agence/prospects/${id}/documents/plan`, { as: AGENCE, method: 'PATCH', body: { status: 'valide' } });
     // Offre réglée par Romain.
-    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { proposalOffer: { total: '3 000 € HT', setup: '1 500 € HT', success: '1 500 € HT', condition: 'Dû uniquement une fois 30 rendez-vous validés générés.' } } })).status).toBe(200);
+    // Offre incomplète (ancien format à quatre champs) : refusée (décision 0035).
+    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { proposalOffer: { total: '3 000 € HT', setup: '1 500 € HT', success: '1 500 € HT', condition: 'Dû à 30 RDV.' } } })).status).toBe(400);
+    expect((await call('/agence/prospects-reglages', { as: AGENCE, method: 'PUT', body: { proposalOffer: {
+      total: '3 000 € HT', setup: '1 500 € HT', success: '750 € HT', condition: 'Dû une fois 15 rendez-vous validés générés.',
+      success2: '750 € HT', condition2: 'Dû une fois 30 rendez-vous validés générés.', management: '400 € HT / mois', managementTerms: 'Engagement de 3 mois.',
+    } } })).status).toBe(200);
     expect((await call(`/agence/prospects/${id}/documents/proposition/generate`, { as: AGENCE, method: 'POST', body: {} })).status).toBe(200);
     const brief = (await (await call(`/robot/clients/${id}/delivery/pr~proposition/brief`, { headers: robotHeaders })).json()) as any;
     expect(brief.masterPrompt).toContain('Tu n\'écris jamais un prix');
@@ -363,6 +368,10 @@ describe('Prospects : proposition commerciale et son Google Doc (décision 0034)
     expect(md).toContain('démonstrations qualifiées de Recrutia auprès des cabinets comptables via Meta');
     expect(md).toContain('| Infrastructure d\'acquisition (total) | 3 000 € HT |');
     expect(md).toContain('**1 500 € HT**');
+    expect(md).toContain('| **Paiement 2 — au résultat** · Dû une fois 15 rendez-vous validés générés. | **750 € HT** |');
+    expect(md).toContain('| **Paiement 3 — au résultat** · Dû une fois 30 rendez-vous validés générés. | **750 € HT** |');
+    expect(md).toContain('Engagement de 3 mois. | **400 € HT / mois** |');
+    expect(md).toContain('**Option 2 — Autonomie**');
     expect(md).toContain('emails automatisés de confirmation et de rappel');
     expect(md).not.toContain('SMS');
     expect(md).not.toContain('{{');

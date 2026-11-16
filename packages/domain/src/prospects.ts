@@ -355,15 +355,32 @@ export const DEFAULT_TUNNEL_CONTEXT = `Ce qu'Obsidian Partners installe pour un 
 export const PROPOSAL_AI_FIELDS = ['ENTREPRISE', 'LOGICIEL', 'CONTACTS', 'CIBLE'] as const;
 export type ProposalAiField = (typeof PROPOSAL_AI_FIELDS)[number];
 /** Champs remplis par le code : date et prix (jamais par Claude). {{DEMARRAGE}} reste « [à compléter] » : Romain saisit la date du kick-off. */
-export const PROPOSAL_CODE_FIELDS = ['DATE', 'PRIX_TOTAL', 'PRIX_MISE_EN_PLACE', 'PRIX_RESULTAT', 'CONDITION_RESULTAT'] as const;
+export const PROPOSAL_CODE_FIELDS = ['DATE', 'PRIX_TOTAL', 'PRIX_MISE_EN_PLACE', 'PRIX_RESULTAT', 'CONDITION_RESULTAT', 'PRIX_RESULTAT_2', 'CONDITION_RESULTAT_2', 'PRIX_GESTION', 'ENGAGEMENT_GESTION'] as const;
 
-export interface ProposalOffer { total: string; setup: string; success: string; condition: string }
+/** Offre (décision 0035) : mise en place, deux paiements au résultat (15 puis 30 RDV), puis gestion mensuelle facultative. */
+export interface ProposalOffer {
+  total: string; setup: string;
+  success: string; condition: string;
+  success2: string; condition2: string;
+  management: string; managementTerms: string;
+}
 export const DEFAULT_PROPOSAL_OFFER: ProposalOffer = {
   total: '3 000 €',
   setup: '1 500 €',
-  success: '1 500 €',
-  condition: 'Dû uniquement une fois 30 rendez-vous validés générés.',
+  success: '750 €',
+  condition: 'Dû une fois 15 rendez-vous validés générés.',
+  success2: '750 €',
+  condition2: 'Dû une fois 30 rendez-vous validés générés.',
+  management: '400 € / mois',
+  managementTerms: 'Engagement de 3 mois.',
 };
+/** Valeurs des {{CHAMPS}} de prix à partir de l'offre. */
+export function proposalOfferValues(o: ProposalOffer): Record<string, string> {
+  return {
+    PRIX_TOTAL: o.total, PRIX_MISE_EN_PLACE: o.setup, PRIX_RESULTAT: o.success, CONDITION_RESULTAT: o.condition,
+    PRIX_RESULTAT_2: o.success2, CONDITION_RESULTAT_2: o.condition2, PRIX_GESTION: o.management, ENGAGEMENT_GESTION: o.managementTerms,
+  };
+}
 
 /** Modèle par défaut, repris de la proposition IREN × Obsidian (29 septembre 2026), séquences de nurturing en email seulement. */
 export const DEFAULT_PROPOSAL_TEMPLATE = `# OBSIDIAN PARTNERS
@@ -395,12 +412,20 @@ Un système complet, construit et piloté par Obsidian Partners, qui génère de
 |---|---|
 | **Paiement 1 — à la mise en place** · Dû à la signature, avant le démarrage. | **{{PRIX_MISE_EN_PLACE}}** |
 | **Paiement 2 — au résultat** · {{CONDITION_RESULTAT}} | **{{PRIX_RESULTAT}}** |
+| **Paiement 3 — au résultat** · {{CONDITION_RESULTAT_2}} | **{{PRIX_RESULTAT_2}}** |
 
-- **Condition du paiement 2** — le seuil de 30 rendez-vous validés doit être atteint sur un scope de 90 jours à compter du lancement des campagnes. Si ce seuil n'est pas atteint dans ce délai, la seconde moitié n'est jamais due.
+- **Condition des paiements 2 et 3** — chaque seuil (15 puis 30 rendez-vous validés) doit être atteint sur un scope de 90 jours à compter du lancement des campagnes. Un seuil non atteint dans ce délai n'est jamais dû.
 - **Ce qui compte comme un rendez-vous** — une démo réservée par un prospect issu des campagnes, qu'il la réserve seul dans l'agenda ou qu'elle soit fixée lors du rappel par votre équipe (chaque nouveau lead doit être rappelé dans les 5 minutes).
 - **Quand un rendez-vous est validé** — dès que le prospect correspond à l'avatar client défini ensemble au démarrage. Un prospect qui correspond à l'avatar mais n'a pas d'urgence ou n'achète pas reste comptabilisé : nous garantissons la qualité des prospects, la vente reste entre vos mains.
 - **Budget publicitaire** — 20 € / jour au lancement (≈ 600 € / mois), réglé directement par le client à Meta. Ajustable ensuite selon les résultats.
 - **Démarrage** — kick-off prévu le {{DEMARRAGE}}.
+
+## APRÈS LES 30 RENDEZ-VOUS VALIDÉS
+
+| Au choix | Tarif |
+|---|---|
+| **Option 1 — Gestion par Obsidian Partners** · Revue et optimisation des publicités, nouvelles créations, modifications et maintenance du système. {{ENGAGEMENT_GESTION}} | **{{PRIX_GESTION}}** |
+| **Option 2 — Autonomie** · Tout est construit sur vos comptes (publicités, pages, CRM) : vous reprenez le pilotage du système vous-mêmes. | **Aucun frais** |
 
 ---
 
@@ -409,7 +434,7 @@ Obsidian Partners
 
 /** Remplace les {{CHAMPS}} du modèle ; un champ sans valeur devient « [à compléter] » (rien d'inventé). */
 export function renderProposal(template: string, values: Partial<Record<string, string | null | undefined>>): string {
-  return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, k: string) => {
+  return template.replace(/\{\{([A-Z][A-Z0-9_]*)\}\}/g, (_, k: string) => {
     const v = values[k];
     return typeof v === 'string' && v.trim() ? v.trim() : '[à compléter]';
   });
