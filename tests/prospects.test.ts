@@ -398,7 +398,9 @@ describe('Prospects : proposition commerciale et son Google Doc (décision 0034)
     expect(gb.html).toContain('>Infrastructure d&#39;acquisition (total)</td>'.replace('&#39;', "'"));
     expect(gb.html).toContain('<strong>1 500 € HT</strong>');
     expect(gb.html).toContain('kick-off prévu le mardi 18 novembre 2026');
-    expect((gb.html.match(/<table/g) ?? []).length).toBe(3);
+    expect((gb.html.match(/<table/g) ?? []).length).toBe(4);
+    expect(gb.html).toContain('SIGNATURES');
+    expect(gb.html).toContain('<strong>Romain Auroux</strong>');
     expect(gb.masterPrompt).toContain('create_file');
     expect((await call(`/robot/clients/${id}/delivery/pr~gdoc`, { method: 'PUT', headers: robotHeaders, body: { contentMd: 'https://exemple.com' } })).status).toBe(400);
     expect((await call(`/robot/clients/${id}/delivery/pr~gdoc`, { method: 'PUT', headers: robotHeaders, body: { contentMd: 'https://docs.google.com/document/d/1ZyXwVuTsRqPoNm/edit' } })).status).toBe(200);

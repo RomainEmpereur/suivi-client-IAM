@@ -399,7 +399,7 @@ Un système complet, construit et piloté par Obsidian Partners, qui génère de
 
 - **Offre & angles d'attaque** — construction de l'offre cold traffic et des messages centrés sur les problèmes des {{CIBLE}}.
 - **Campagnes Meta** — structure de campagnes, ciblage par verticale métier et créations publicitaires (vidéos et visuels).
-- **Page de conversion + VSL** — landing page avec vidéo de présentation (5 à 8 min) et formulaire de qualification.
+- **Page de conversion + VSL** — landing page avec vidéo de présentation et formulaire de qualification.
 - **Prise de RDV** — agenda de réservation des démos intégré au parcours.
 - **Speed-to-lead** — notification instantanée de chaque nouveau lead (Slack / Discord) pour un rappel en moins de 5 minutes.
 - **Séquences de nurturing** — emails automatisés de confirmation et de rappel pour réduire les absences aux démos.
@@ -426,6 +426,18 @@ Un système complet, construit et piloté par Obsidian Partners, qui génère de
 |---|---|
 | **Option 1 — Gestion par Obsidian Partners** · Revue et optimisation des publicités, nouvelles créations, modifications et maintenance du système. {{ENGAGEMENT_GESTION}} | **{{PRIX_GESTION}}** |
 | **Option 2 — Autonomie** · Tout est construit sur vos comptes (publicités, pages, CRM) : vous reprenez le pilotage du système vous-mêmes. | **Aucun frais** |
+
+## SIGNATURES
+
+Bon pour accord, précédé de la mention « Lu et approuvé ».
+
+| Pour Obsidian Partners | Pour {{ENTREPRISE}} |
+|---|---|
+| **Romain Auroux** | **{{CONTACTS}}** |
+| Date : | Date : |
+| Signature : | Signature : |
+|  |  |
+|  |  |
 
 ---
 

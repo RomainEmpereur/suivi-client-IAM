@@ -689,6 +689,14 @@ function ProposalPanel({ data, reload }: { data: Full; reload: () => void }) {
     try { await api(path, init); setEdit(false); reload(); } catch (x) { setErr((x as ApiError).message); }
   }
   const patch = (body: Record<string, unknown>) => call(`/agence/prospects/${data.prospect.id}/documents/proposition`, { method: 'PATCH', body: JSON.stringify(body) });
+  async function validateAndCreate() {
+    setErr(null);
+    try {
+      await api(`/agence/prospects/${data.prospect.id}/documents/proposition`, { method: 'PATCH', body: JSON.stringify({ status: 'valide' }) });
+      await api(`/agence/prospects/${data.prospect.id}/documents/proposition/gdoc`, { method: 'POST', body: '{}' });
+    } catch (x) { setErr((x as ApiError).message); }
+    reload();
+  }
   return (
     <section class="card" style="display:flex;flex-direction:column;gap:10px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -705,9 +713,16 @@ function ProposalPanel({ data, reload }: { data: Full; reload: () => void }) {
         : <article class="md-content" style="border:1px solid var(--border);border-radius:8px;padding:16px 20px" dangerouslySetInnerHTML={{ __html: renderMarkdown(markdown) }} />)}
       {doc && doc.status === 'brouillon' && (
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          {!edit && <button class="btn" disabled={todo} title={todo ? 'Il reste des « [à compléter] »' : undefined} onClick={() => patch({ status: 'valide' })}>Valider</button>}
+          {!edit && <button class="btn" disabled={todo} title={todo ? 'Il reste des « [à compléter] »' : undefined} onClick={validateAndCreate}>Valider et créer le Google Doc</button>}
+          {!edit && <button class="ghost-btn" disabled={todo} onClick={() => patch({ status: 'valide' })}>Valider seulement</button>}
           {!edit && <button class="ghost-btn" onClick={() => { setMd(markdown); setEdit(true); }}>Modifier</button>}
           {edit && <><button class="btn" onClick={() => patch({ content: { ...doc.content, markdown: md } })}>Enregistrer</button><button class="ghost-btn" onClick={() => setEdit(false)}>Annuler</button></>}
+        </div>
+      )}
+      {doc && !d.validated && (
+        <div class="card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <strong>Google Doc</strong>
+          <span class="small muted">{todo ? 'Complétez les « [à compléter] » (Modifier), puis « Valider et créer le Google Doc ».' : 'Cliquez sur « Valider et créer le Google Doc » ci-dessus : le document est créé dans votre Drive au prochain passage de la tâche.'}</span>
         </div>
       )}
       {d.validated && (
