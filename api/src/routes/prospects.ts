@@ -26,7 +26,7 @@ prospects.use('/prospects-reglages/*', async (c, next) => { requireAgency(c); aw
 interface ProspectRow {
   id: string; name: string; software: string | null; website: string | null; email: string | null; phone: string | null; source: string;
   stage: ProspectStage; verdict: string | null; force_continue: number; main_objection: string | null; market_research: string | null;
-  case_study_id: string | null; loom_url: string | null; loom_sent_on: string | null; offer_text: string | null; offer_price: string | null;
+  case_study_id: string | null; loom_url: string | null; loom_sent_on: string | null; diagram_url: string | null; offer_text: string | null; offer_price: string | null;
   outcome_reason: string | null; signed_amount_cents: number | null; client_id: string | null; last_action_at: string; created_at: string; updated_at: string;
 }
 interface CallRow {
@@ -229,7 +229,7 @@ async function serializeFull(db: D1Database, st: Loaded) {
 const serializeProspect = (p: ProspectRow) => ({
   id: p.id, name: p.name, software: p.software, website: p.website, email: p.email, phone: p.phone, source: p.source, stage: p.stage,
   verdict: p.verdict, forceContinue: Boolean(p.force_continue), mainObjection: p.main_objection, marketResearch: p.market_research,
-  caseStudyId: p.case_study_id, loomUrl: p.loom_url, loomSentOn: p.loom_sent_on, offerText: p.offer_text, offerPrice: p.offer_price,
+  caseStudyId: p.case_study_id, loomUrl: p.loom_url, loomSentOn: p.loom_sent_on, diagramUrl: p.diagram_url, offerText: p.offer_text, offerPrice: p.offer_price,
   outcomeReason: p.outcome_reason, signedAmountCents: p.signed_amount_cents, clientId: p.client_id, lastActionAt: p.last_action_at, createdAt: p.created_at,
 });
 const serializeCall = (c: CallRow) => ({
@@ -329,7 +329,7 @@ prospects.patch('/prospects/:id', async (c) => {
   if (!b || typeof b !== 'object') throw new HttpError(400, 'Corps de requête invalide.');
   const cols: Record<string, unknown> = {};
   const text: [string, string, number][] = [['name', 'name', 160], ['software', 'software', 160], ['website', 'website', 300], ['email', 'email', 200],
-    ['phone', 'phone', 40], ['marketResearch', 'market_research', 30_000], ['loomUrl', 'loom_url', 500], ['loomSentOn', 'loom_sent_on', 40],
+    ['phone', 'phone', 40], ['marketResearch', 'market_research', 30_000], ['loomUrl', 'loom_url', 500], ['loomSentOn', 'loom_sent_on', 40], ['diagramUrl', 'diagram_url', 500],
     ['offerText', 'offer_text', 4000], ['offerPrice', 'offer_price', 200]];
   for (const [k, col, max] of text) if (k in b) cols[col] = str(b[k], max);
   if ('name' in b && !cols.name) throw new HttpError(400, 'Nom du prospect requis.');

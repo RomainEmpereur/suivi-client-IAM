@@ -112,8 +112,9 @@ describe('Prospects : du R1 au R2', () => {
     expect(d.prospect).toMatchObject({ stage: 'plan_valide', caseStudyId: 'cs_civex' });
     await call(`/agence/prospects/${id}/documents/script_loom/generate`, { as: AGENCE, method: 'POST', body: {} });
     await deposit(call, id, 'script_loom', { dureeMinutes: 7, passages: [], messageEmail: { objet: 'o', corps: 'c' }, messageSms: 's' });
-    await call(`/agence/prospects/${id}`, { as: AGENCE, method: 'PATCH', body: { loomUrl: 'https://loom.com/x', loomSentOn: '2026-11-12' } });
+    await call(`/agence/prospects/${id}`, { as: AGENCE, method: 'PATCH', body: { loomUrl: 'https://loom.com/x', loomSentOn: '2026-11-12', diagramUrl: 'https://claude.ai/artifact/abc' } });
     expect((await get()).prospect.stage).toBe('loom_envoye');
+    expect((await get()).prospect.diagramUrl).toBe('https://claude.ai/artifact/abc');
     await call(`/agence/prospects/${id}/calls/r2`, { as: AGENCE, method: 'PATCH', body: { scheduledAt: '2026-11-20T10:00:00Z' } });
     expect((await get()).prospect.stage).toBe('r2_planifie');
     await call(`/agence/prospects/${id}/documents/pitch_r2/generate`, { as: AGENCE, method: 'POST', body: {} });

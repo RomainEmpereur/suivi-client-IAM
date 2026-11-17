@@ -31,7 +31,7 @@ interface Full {
   prospect: {
     id: string; name: string; software: string | null; website: string | null; email: string | null; phone: string | null; source: string; stage: Item['stage'];
     verdict: string | null; forceContinue: boolean; mainObjection: string | null; marketResearch: string | null; caseStudyId: string | null; loomUrl: string | null;
-    loomSentOn: string | null; offerText: string | null; offerPrice: string | null; outcomeReason: string | null; signedAmountCents: number | null; clientId: string | null;
+    loomSentOn: string | null; diagramUrl: string | null; offerText: string | null; offerPrice: string | null; outcomeReason: string | null; signedAmountCents: number | null; clientId: string | null;
   };
   client: { id: string; name: string } | null;
   figures: Record<ProspectFigure, { value: number | null; origin: string | null }>;
@@ -591,7 +591,7 @@ function StepAnalyse({ data, reload }: { data: Full; reload: () => void }) {
 function StepPlan({ data, reload }: { data: Full; reload: () => void }) {
   const p = data.prospect;
   const [research, setResearch] = useState(p.marketResearch ?? '');
-  const [loom, setLoom] = useState({ url: p.loomUrl ?? '', on: p.loomSentOn ?? '' });
+  const [loom, setLoom] = useState({ url: p.loomUrl ?? '', on: p.loomSentOn ?? '', diagram: p.diagramUrl ?? '' });
   const save = async (body: Record<string, unknown>) => { await api(`/agence/prospects/${p.id}`, { method: 'PATCH', body: JSON.stringify(body) }); reload(); };
   const script = data.docs.script_loom.validated?.content ?? data.docs.script_loom.latest?.content;
   return (
@@ -617,7 +617,9 @@ function StepPlan({ data, reload }: { data: Full; reload: () => void }) {
       <div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
         <label class="field">Lien du Loom<input type="url" value={loom.url} onInput={(e) => setLoom({ ...loom, url: (e.target as HTMLInputElement).value })} placeholder="https://www.loom.com/share/…" /></label>
         <label class="field">Envoyé le<input type="date" value={loom.on} onInput={(e) => setLoom({ ...loom, on: (e.target as HTMLInputElement).value })} /></label>
-        <button class="ghost-btn" onClick={() => save({ loomUrl: loom.url, loomSentOn: loom.on })}>Enregistrer</button>
+        <label class="field" style="flex:1 1 260px">Diagramme présenté dans le Loom (lien de l'artefact Claude)<input type="url" value={loom.diagram} onInput={(e) => setLoom({ ...loom, diagram: (e.target as HTMLInputElement).value })} placeholder="https://claude.ai/artifact/…" /></label>
+        {p.diagramUrl && <a class="ghost-btn" href={p.diagramUrl} target="_blank" rel="noopener noreferrer">Ouvrir le diagramme</a>}
+        <button class="ghost-btn" onClick={() => save({ loomUrl: loom.url, loomSentOn: loom.on, diagramUrl: loom.diagram })}>Enregistrer</button>
         <span class="small muted">L'espace n'envoie rien : copiez le message, envoyez-le vous-même.</span>
       </div>
     </div>
